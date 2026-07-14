@@ -32,7 +32,7 @@ body:
       placeholder: |
         1. Create a new conda environment.
         2. Clone the repository, install as local editable and properly set up.
-        3. Run the command: `accelerate launch src/f5_tts/train/train.py`.
+        3. Run the command: `accelerate launch src/echoforge_tts/train/train.py`.
         4. Have following error message... (attach logs).
     validations:
       required: true

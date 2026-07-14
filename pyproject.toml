@@ -3,9 +3,9 @@ requires = ["setuptools >= 61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "f5-tts"
+name = "echoforge-tts"
 version = "1.1.21"
-description = "F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching"
+description = "EchoForge AI: Text-to-Speech engine"
 readme = "README.md"
 license = {text = "MIT License"}
 classifiers = [
@@ -55,10 +55,10 @@ eval = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/SWivid/F5-TTS"
+Homepage = "TBD"
 
 [project.scripts]
-"f5-tts_infer-cli" = "f5_tts.infer.infer_cli:main"
-"f5-tts_infer-gradio" = "f5_tts.infer.infer_gradio:main"
-"f5-tts_finetune-cli" = "f5_tts.train.finetune_cli:main"
-"f5-tts_finetune-gradio" = "f5_tts.train.finetune_gradio:main"
+"echoforge_infer-cli" = "echoforge_tts.infer.infer_cli:main"
+"echoforge_infer-gradio" = "echoforge_tts.infer.infer_gradio:main"
+"echoforge_finetune-cli" = "echoforge_tts.train.finetune_cli:main"
+"echoforge_finetune-gradio" = "echoforge_tts.train.finetune_gradio:main"

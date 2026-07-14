@@ -1,0 +1,107 @@
+PROJECT: Rebrand F5-TTS open-source repo to "EchoForge AI"
+
+CONTEXT:
+This is a fork of the MIT-licensed F5-TTS text-to-speech repository. The goal 
+right now is a SURFACE-LEVEL REBRAND ONLY. Do NOT touch model architecture 
+(dit.py, mmdit.py, unett.py, cfm.py, modules.py internals, trainer.py training 
+logic). Do NOT change any tensor shapes, model class internals, or training 
+algorithms. This is a naming/branding/metadata pass only.
+
+NEW BRAND NAME: EchoForge AI
+NEW PACKAGE NAME (python import name): echoforge_tts
+NEW CLI PREFIX: echoforge
+
+=== TASK 1: Python package rename ===
+Rename the package directory `src/f5_tts/` to `src/echoforge_tts/`.
+Update every `import f5_tts...` / `from f5_tts...` statement across the ENTIRE 
+codebase to `import echoforge_tts...` / `from echoforge_tts...`.
+This affects ~57 files, including but not limited to:
+- src/f5_tts/api.py
+- src/f5_tts/model/__init__.py and all files in model/, model/backbones/
+- src/f5_tts/infer/*.py (infer_cli.py, infer_gradio.py, utils_infer.py, speech_edit.py)
+- src/f5_tts/train/*.py and train/datasets/*.py
+- src/f5_tts/eval/*.py
+- src/f5_tts/scripts/*.py
+- src/f5_tts/socket_client.py, socket_server.py
+- src/f5_tts/runtime/triton_trtllm/**/*.py (including patch/f5tts/ subfolder — 
+  rename that folder to patch/echoforge_tts/ too, and update its internal imports)
+After renaming, verify no file still references the old `f5_tts` module path 
+anywhere (grep the whole repo for "f5_tts" after the change — it should only 
+remain in comments/docs that explicitly credit the original project, see TASK 4).
+
+=== TASK 2: Config file renames ===
+Rename these config files to match new branding (keep YAML content/structure 
+identical — only filenames and any internal "name:" or model-tag fields that 
+are purely cosmetic labels change):
+- configs/F5TTS_Base.yaml -> configs/EchoForge_Base.yaml
+- configs/F5TTS_Small.yaml -> configs/EchoForge_Small.yaml
+- configs/F5TTS_v1_Base.yaml -> configs/EchoForge_v1_Base.yaml
+- configs/F5TTS_v1_Small.yaml -> configs/EchoForge_v1_Small.yaml
+Update every reference to these filenames elsewhere in the codebase (train.py, 
+finetune_cli.py, finetune_gradio.py, any script that loads these YAMLs by name).
+
+=== TASK 3: pyproject.toml metadata ===
+- name = "echoforge-tts"
+- description = "EchoForge AI: Text-to-Speech engine" (or similar, keep it accurate)
+- Remove or update [project.urls] Homepage to whatever new repo URL will be used 
+  (leave placeholder "TBD" if not yet decided — do not invent a fake URL)
+- Update [project.scripts] entry points:
+  "echoforge_infer-cli" = "echoforge_tts.infer.infer_cli:main"
+  "echoforge_finetune-cli" = "echoforge_tts.train.finetune_cli:main"
+  (and gradio equivalents)
+- Keep the license field as MIT — do not change license type.
+
+=== TASK 4: Legal attribution — DO NOT SKIP ===
+This is MIT-licensed code originally by Yushen CHEN (SWivid), copyright 2024.
+MIT license legally REQUIRES the original copyright notice to be preserved.
+- Do NOT delete or modify the LICENSE file's copyright line.
+- Add a new section in README.md (near the bottom, under a "Credits" or 
+  "Acknowledgements" heading) stating clearly: 
+  "EchoForge AI is built on top of F5-TTS (https://github.com/SWivid/F5-TTS), 
+  originally created by Yushen Chen and contributors, licensed under MIT."
+- This attribution must remain visible and unaltered.
+
+=== TASK 5: README.md rewrite ===
+Rewrite the README title, badges, and description sections to reflect 
+"EchoForge AI" branding instead of "F5-TTS". Remove badges/links that point to 
+the original project's demo pages, arXiv paper badge can stay only if referenced 
+as "based on the F5-TTS research paper" for technical accuracy — do not claim 
+the research/paper as EchoForge's own work.
+Keep all installation instructions, usage instructions, and technical content 
+accurate and functional — only change branding language, not technical steps.
+
+=== TASK 6: Gradio UI branding ===
+In infer_gradio.py and finetune_gradio.py, update:
+- Page title / browser tab title -> "EchoForge AI"
+- Header/banner text in the Gradio interface
+- Any footer text mentioning "F5-TTS"
+Do NOT change any Gradio component logic, function names, or event handlers — 
+only user-facing text strings.
+
+=== TASK 7: CRITICAL — DO NOT BREAK CHECKPOINT DOWNLOADING ===
+In src/f5_tts/api.py (now echoforge_tts/api.py), there is a line using 
+`cached_path(f"hf://SWivid/{repo_name}/...")` — this downloads the ACTUAL 
+PRETRAINED MODEL WEIGHTS from the real "SWivid/F5-TTS" HuggingFace repository.
+DO NOT rename "SWivid" or the HuggingFace repo_id string in this download path. 
+If this is changed, model loading will break because no HuggingFace repo named 
+"EchoForge/..." exists. This specific hardcoded HF path must remain pointing to 
+the original SWivid repo unless/until we host our own fine-tuned weights 
+separately (not part of this task).
+Apply the same caution to any other `hf://`, `huggingface.co/SWivid`, or 
+`hf_hub_download(repo_id=...)` calls anywhere in the codebase — these are data 
+source paths, not branding text, and must not be touched in this rebrand pass.
+
+=== TASK 8: Docker / deployment naming ===
+- Dockerfile: update any image labels/comments mentioning F5-TTS to EchoForge AI
+- docker-compose.yml in triton_trtllm: update service names if purely cosmetic
+- Do not change any port numbers, volume mounts, or actual runtime commands.
+
+=== VERIFICATION STEP (do this last) ===
+After all changes, run a repo-wide search for the string "f5_tts" (case-insensitive) 
+and confirm every remaining occurrence is either:
+(a) inside the TASK 7 HuggingFace download path (intentionally kept), or
+(b) inside the TASK 4 attribution/credits text (intentionally kept), or
+(c) inside LICENSE file (intentionally kept).
+Any other occurrence means something was missed and must be fixed.
+Also confirm the app still runs: import the renamed package, launch the Gradio 
+demo, and confirm no ImportError or ModuleNotFoundError occurs.
