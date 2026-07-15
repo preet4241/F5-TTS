@@ -1,0 +1,142 @@
+PROJECT: EchoForge AI — Dark Studio Theme for Gradio Web UI
+
+CONTEXT:
+File: src/echoforge_tts/infer/infer_gradio.py
+There are 5 separate `gr.Blocks()` definitions in this file: app_tts, 
+app_multistyle, app_chat, app_credits, and the outer `app` block that wraps 
+them via gr.TabbedInterface. DO NOT apply theme/css separately to each inner 
+block — only the OUTERMOST `app = gr.Blocks(...)` (around line 960) needs the 
+theme and css parameters. It cascades to all tabs automatically. Do not touch 
+Blocks() calls for app_tts, app_multistyle, app_chat, app_credits individually.
+
+Do NOT change any functional logic — no changes to button click handlers, 
+audio processing functions, model inference calls, or component wiring. This 
+is a pure visual/CSS pass.
+
+=== TASK 1: Define a custom Gradio theme ===
+At the top of infer_gradio.py (after existing imports), add a custom gr.Theme 
+using gr.themes.Base() as the parent, with these exact values:
+
+custom_theme = gr.themes.Base(
+    primary_hue=gr.themes.Color(
+        c50="#F3EFFF", c100="#E4DBFF", c200="#C9B8FF", c300="#A78BFA",
+        c400="#8F6FFF", c500="#7C5CFF", c600="#6845E8", c700="#5433C7",
+        c800="#3F26A0", c900="#2C1B75", c950="#1D1250",
+    ),
+    neutral_hue=gr.themes.Color(
+        c50="#EDEAF2", c100="#D4D0DE", c200="#8B879A", c300="#6B6779",
+        c400="#4A4658", c500="#2A2733", c600="#1C1A22", c700="#161420",
+        c800="#121016", c900="#0D0B10", c950="#08070A",
+    ),
+    font=[gr.themes.GoogleFont("Space Grotesk"), "sans-serif"],
+    font_mono=[gr.themes.GoogleFont("Inter"), "monospace"],
+).set(
+    body_background_fill="#121016",
+    body_background_fill_dark="#121016",
+    block_background_fill="#1C1A22",
+    block_border_color="#2A2733",
+    block_title_text_color="#EDEAF2",
+    body_text_color="#EDEAF2",
+    body_text_color_subdued="#8B879A",
+    button_primary_background_fill="#7C5CFF",
+    button_primary_background_fill_hover="#A78BFA",
+    button_primary_text_color="#0D0B10",
+    input_background_fill="#161420",
+    input_border_color="#2A2733",
+    slider_color="#7C5CFF",
+)
+
+Apply it only to the outer app block: 
+`with gr.Blocks(theme=custom_theme, css=CUSTOM_CSS, title="EchoForge AI") as app:`
+
+=== TASK 2: Custom CSS block (signature waveform element + font import) ===
+Define a CUSTOM_CSS string constant before the `with gr.Blocks(...) as app:` line:
+
+CUSTOM_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+.echoforge-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 0 20px 0;
+}
+
+.echoforge-waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 24px;
+}
+
+.echoforge-waveform span {
+    display: inline-block;
+    width: 3px;
+    background: linear-gradient(180deg, #A78BFA, #7C5CFF);
+    border-radius: 2px;
+    animation: echoforge-pulse 1.2s ease-in-out infinite;
+}
+
+.echoforge-waveform span:nth-child(1) { height: 8px;  animation-delay: 0s; }
+.echoforge-waveform span:nth-child(2) { height: 16px; animation-delay: 0.15s; }
+.echoforge-waveform span:nth-child(3) { height: 24px; animation-delay: 0.3s; }
+.echoforge-waveform span:nth-child(4) { height: 14px; animation-delay: 0.45s; }
+.echoforge-waveform span:nth-child(5) { height: 20px; animation-delay: 0.6s; }
+.echoforge-waveform span:nth-child(6) { height: 10px; animation-delay: 0.75s; }
+
+@keyframes echoforge-pulse {
+    0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+    50% { transform: scaleY(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .echoforge-waveform span { animation: none; transform: scaleY(0.7); }
+}
+
+body, .gradio-container {
+    font-family: 'Inter', sans-serif !important;
+}
+
+h1, h2, h3, .echoforge-header {
+    font-family: 'Space Grotesk', sans-serif !important;
+}
+"""
+
+=== TASK 3: Insert the waveform signature into the header markdown ===
+Find the existing header markdown block inside `with gr.Blocks(...) as app:` 
+that currently starts with:
+    gr.Markdown(f"""
+    # EchoForge AI
+    ...
+    
+Replace ONLY the opening `# EchoForge AI` heading rendering with an HTML block 
+using gr.HTML placed immediately BEFORE the existing gr.Markdown call (keep 
+the existing gr.Markdown text/content exactly as is, just remove the 
+duplicate "# EchoForge AI" line from inside it since the HTML header now 
+covers the title):
+
+    gr.HTML("""
+    <div class="echoforge-header">
+        <div class="echoforge-waveform">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <h1 style="margin:0; font-size: 28px; color: #EDEAF2; font-weight: 600;">
+            EchoForge AI
+        </h1>
+    </div>
+    """)
+
+=== TASK 4: Verify nothing functional broke ===
+- Confirm the app still launches without errors (python3 -m echoforge_tts.infer.infer_gradio 
+  or equivalent run command used on Replit)
+- Confirm all 4 tabs (Basic-TTS, Multi-Speech, Voice-Chat, Credits) still render 
+  and all buttons/inputs are still clickable and wired to their original functions
+- Confirm no duplicate CSS class names conflict with Gradio's internal classes 
+  (prefix all custom classes with "echoforge-" as shown above, already done)
+- Take a screenshot or describe what the rendered header looks like to confirm 
+  the waveform animation and dark theme applied correctly
+
+DO NOT modify: model loading code, inference functions, audio processing, 
+file upload/download logic, or any of the click handler bindings. This task 
+is strictly limited to gr.Theme definition, CSS injection, and the header 
+HTML block described above.

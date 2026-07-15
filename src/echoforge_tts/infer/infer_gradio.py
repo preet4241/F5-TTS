@@ -47,6 +47,88 @@ from echoforge_tts.infer.utils_infer import (
 from echoforge_tts.model import DiT, UNetT
 
 
+# ── EchoForge AI custom theme ──────────────────────────────────────────────
+custom_theme = gr.themes.Base(
+    primary_hue=gr.themes.Color(
+        c50="#F3EFFF", c100="#E4DBFF", c200="#C9B8FF", c300="#A78BFA",
+        c400="#8F6FFF", c500="#7C5CFF", c600="#6845E8", c700="#5433C7",
+        c800="#3F26A0", c900="#2C1B75", c950="#1D1250",
+    ),
+    neutral_hue=gr.themes.Color(
+        c50="#EDEAF2", c100="#D4D0DE", c200="#8B879A", c300="#6B6779",
+        c400="#4A4658", c500="#2A2733", c600="#1C1A22", c700="#161420",
+        c800="#121016", c900="#0D0B10", c950="#08070A",
+    ),
+    font=[gr.themes.GoogleFont("Space Grotesk"), "sans-serif"],
+    font_mono=[gr.themes.GoogleFont("Inter"), "monospace"],
+).set(
+    body_background_fill="#121016",
+    body_background_fill_dark="#121016",
+    block_background_fill="#1C1A22",
+    block_border_color="#2A2733",
+    block_title_text_color="#EDEAF2",
+    body_text_color="#EDEAF2",
+    body_text_color_subdued="#8B879A",
+    button_primary_background_fill="#7C5CFF",
+    button_primary_background_fill_hover="#A78BFA",
+    button_primary_text_color="#0D0B10",
+    input_background_fill="#161420",
+    input_border_color="#2A2733",
+    slider_color="#7C5CFF",
+)
+
+CUSTOM_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+.echoforge-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 0 20px 0;
+}
+
+.echoforge-waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 24px;
+}
+
+.echoforge-waveform span {
+    display: inline-block;
+    width: 3px;
+    background: linear-gradient(180deg, #A78BFA, #7C5CFF);
+    border-radius: 2px;
+    animation: echoforge-pulse 1.2s ease-in-out infinite;
+}
+
+.echoforge-waveform span:nth-child(1) { height: 8px;  animation-delay: 0s; }
+.echoforge-waveform span:nth-child(2) { height: 16px; animation-delay: 0.15s; }
+.echoforge-waveform span:nth-child(3) { height: 24px; animation-delay: 0.3s; }
+.echoforge-waveform span:nth-child(4) { height: 14px; animation-delay: 0.45s; }
+.echoforge-waveform span:nth-child(5) { height: 20px; animation-delay: 0.6s; }
+.echoforge-waveform span:nth-child(6) { height: 10px; animation-delay: 0.75s; }
+
+@keyframes echoforge-pulse {
+    0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+    50% { transform: scaleY(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .echoforge-waveform span { animation: none; transform: scaleY(0.7); }
+}
+
+body, .gradio-container {
+    font-family: 'Inter', sans-serif !important;
+}
+
+h1, h2, h3, .echoforge-header {
+    font-family: 'Space Grotesk', sans-serif !important;
+}
+"""
+# ── end theme / css ────────────────────────────────────────────────────────
+
+
 DEFAULT_TTS_MODEL = "EchoForge_v1"
 tts_model_choice = DEFAULT_TTS_MODEL
 
@@ -957,11 +1039,19 @@ with gr.Blocks() as app_credits:
 """)
 
 
-with gr.Blocks() as app:
+with gr.Blocks(theme=custom_theme, css=CUSTOM_CSS, title="EchoForge AI") as app:
+    gr.HTML("""
+    <div class="echoforge-header">
+        <div class="echoforge-waveform">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <h1 style="margin:0; font-size: 28px; color: #EDEAF2; font-weight: 600;">
+            EchoForge AI
+        </h1>
+    </div>
+    """)
     gr.Markdown(
         f"""
-# EchoForge AI
-
 This is {"a local web UI for EchoForge AI" if not USING_SPACES else "an online demo for EchoForge AI"} with advanced batch processing support. This app supports the following TTS models:
 
 * F5-TTS (based on [the F5-TTS research paper](https://arxiv.org/abs/2410.06885) — A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching)
