@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 
 from echoforge_tts.infer.utils_infer import load_checkpoint, load_vocoder, save_spectrogram
 from echoforge_tts.model import CFM
-from echoforge_tts.model.utils import convert_char_to_pinyin, get_tokenizer
+from echoforge_tts.model.utils import convert_text_to_phonemes, get_tokenizer
 
 
 device = (
@@ -196,12 +196,12 @@ edit_mask = F.pad(edit_mask, (0, mel_cond.shape[1] - edit_mask.shape[-1]), value
 
 # Text
 text_list = [target_text]
-if tokenizer == "pinyin":
-    final_text_list = convert_char_to_pinyin(text_list)
+if tokenizer == "phonemizer":
+    final_text_list = convert_text_to_phonemes(text_list)
 else:
     final_text_list = [text_list]
-print(f"text  : {text_list}")
-print(f"pinyin: {final_text_list}")
+print(f"text     : {text_list}")
+print(f"phonemes : {final_text_list}")
 
 # Duration - use mel_cond length (not raw audio length)
 duration = mel_cond.shape[1]

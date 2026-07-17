@@ -7,9 +7,7 @@ import random
 from collections import defaultdict
 from importlib.resources import files
 
-import rjieba
 import torch
-from pypinyin import Style, lazy_pinyin
 from torch.nn.utils.rnn import pad_sequence
 
 
@@ -109,17 +107,18 @@ def list_str_to_idx(
 # Get tokenizer
 
 
-def get_tokenizer(dataset_name, tokenizer: str = "pinyin"):
+def get_tokenizer(dataset_name, tokenizer: str = "phonemizer"):
     """
-    tokenizer   - "pinyin" do g2p for only chinese characters, need .txt vocab_file
+    tokenizer   - "phonemizer" use espeak-ng G2P for Hindi (Devanagari) and English text, need .txt vocab_file
+                  vocab folder naming convention: {dataset_name}_phonemizer/vocab.txt
                 - "char" for char-wise tokenizer, need .txt vocab_file
                 - "byte" for utf-8 tokenizer
                 - "custom" if you're directly passing in a path to the vocab.txt you want to use
-    vocab_size  - if use "pinyin", all available pinyin types, common alphabets (also those with accent) and symbols
+    vocab_size  - if use "phonemizer", derived from phoneme symbols produced by espeak-ng for the dataset
                 - if use "char", derived from unfiltered character & symbol counts of custom dataset
                 - if use "byte", set to 256 (unicode byte range)
     """
-    if tokenizer in ["pinyin", "char"]:
+    if tokenizer in ["phonemizer", "char"]:
         tokenizer_path = os.path.join(files("echoforge_tts").joinpath("../../data"), f"{dataset_name}_{tokenizer}/vocab.txt")
         with open(tokenizer_path, "r", encoding="utf-8") as f:
             vocab_char_map = {}
@@ -142,44 +141,93 @@ def get_tokenizer(dataset_name, tokenizer: str = "pinyin"):
     return vocab_char_map, vocab_size
 
 
-# convert char to pinyin
+# Language detection helpers
 
 
-def convert_char_to_pinyin(text_list, polyphone=True):
-    final_text_list = []
+def is_devanagari(c):
+    """Returns True if the character is in the Devanagari Unicode block (Hindi/Sanskrit)."""
+    return "\u0900" <= c <= "\u097F"
+
+
+# Module-level phonemizer backends — lazily initialized and reused across calls
+# to avoid spawning a new espeak-ng subprocess on every inference request.
+_phonemizer_en = None
+_phonemizer_hi = None
+
+
+def _get_phonemizer_backend(lang: str):
+    """Return a cached EspeakBackend for the requested language ('en' or 'hi')."""
+    global _phonemizer_en, _phonemizer_hi
+    from phonemizer.backend import EspeakBackend  # imported lazily so module loads without espeak-ng
+
+    if lang == "en" and _phonemizer_en is None:
+        _phonemizer_en = EspeakBackend("en-us", preserve_punctuation=True, with_stress=True)
+    if lang == "hi" and _phonemizer_hi is None:
+        _phonemizer_hi = EspeakBackend("hi", preserve_punctuation=True, with_stress=False)
+    return _phonemizer_en if lang == "en" else _phonemizer_hi
+
+
+def _segment_by_script(text: str):
+    """Split a string into (segment, lang) pairs based on character script.
+
+    Devanagari characters map to 'hi', everything else maps to 'en'.
+    Consecutive characters of the same script are grouped together.
+    """
+    segments = []
+    current_chars: list[str] = []
+    current_lang = None
+
+    for c in text:
+        lang = "hi" if is_devanagari(c) else "en"
+        if lang != current_lang:
+            if current_chars:
+                segments.append(("".join(current_chars), current_lang))
+            current_chars = [c]
+            current_lang = lang
+        else:
+            current_chars.append(c)
+
+    if current_chars:
+        segments.append(("".join(current_chars), current_lang))
+
+    return segments
+
+
+def convert_text_to_phonemes(text_list):
+    """Convert a list of texts to phoneme/character sequences.
+
+    Handles English, Hindi (Devanagari), and mixed Hinglish text.
+    Uses espeak-ng via the ``phonemizer`` library for both languages.
+    Backends are initialized once at module level and reused across calls.
+
+    Returns a list of character lists — same format as the former
+    convert_char_to_pinyin() so all downstream tokenizer code is unchanged.
+    Falls back to raw characters gracefully if espeak-ng is unavailable.
+    """
     custom_trans = str.maketrans(
-        {";": ",", "“": '"', "”": '"', "‘": "'", "’": "'"}
-    )  # add custom trans here, to address oov
+        {";": ",", "\u201c": '"', "\u201d": '"', "\u2018": "\'", "\u2019": "\'"}
+    )
 
-    def is_chinese(c):
-        return (
-            "\u3100" <= c <= "\u9fff"  # common chinese characters
-        )
-
+    final_text_list = []
     for text in text_list:
-        char_list = []
         text = text.translate(custom_trans)
-        for seg in rjieba.cut(text):
-            seg_byte_len = len(bytes(seg, "UTF-8"))
-            if seg_byte_len == len(seg):  # if pure alphabets and symbols
-                if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
+        segments = _segment_by_script(text)
+        char_list: list[str] = []
+
+        for seg_text, lang in segments:
+            if not seg_text:
+                continue
+            try:
+                backend = _get_phonemizer_backend(lang)
+                phonemized = backend.phonemize([seg_text], njobs=1)[0]
+                # Add a space boundary between adjacent segments when needed
+                if char_list and char_list[-1] != " " and phonemized and phonemized[0] != " ":
                     char_list.append(" ")
-                char_list.extend(seg)
-            elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
-                seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
-                for i, c in enumerate(seg):
-                    if is_chinese(c):
-                        char_list.append(" ")
-                    char_list.append(seg_[i])
-            else:  # if mixed characters, alphabets and symbols
-                for c in seg:
-                    if ord(c) < 256:
-                        char_list.extend(c)
-                    elif is_chinese(c):
-                        char_list.append(" ")
-                        char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
-                    else:
-                        char_list.append(c)
+                char_list.extend(list(phonemized))
+            except Exception:
+                # Graceful fallback: emit raw characters without crashing
+                char_list.extend(list(seg_text))
+
         final_text_list.append(char_list)
 
     return final_text_list

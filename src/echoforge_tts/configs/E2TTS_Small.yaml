@@ -19,7 +19,7 @@ optim:
 
 model:
   name: E2TTS_Small
-  tokenizer: pinyin
+  tokenizer: phonemizer
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: UNetT
   arch:

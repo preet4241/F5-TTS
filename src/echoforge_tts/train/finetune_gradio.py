@@ -30,7 +30,7 @@ from scipy.io import wavfile
 
 from echoforge_tts.api import F5TTS
 from echoforge_tts.infer.utils_infer import transcribe
-from echoforge_tts.model.utils import convert_char_to_pinyin
+from echoforge_tts.model.utils import convert_text_to_phonemes
 
 
 def _safe_project_path(base: str, name: str) -> str:
@@ -795,7 +795,7 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
             continue
 
         text = text.strip()
-        text = convert_char_to_pinyin([text], polyphone=True)[0]
+        text = convert_text_to_phonemes([text])[0]
 
         audio_path_list.append(file_audio)
         duration_list.append(duration)
@@ -1107,8 +1107,8 @@ def vocab_check(project_name, tokenizer_type):
             continue
 
         text = sp[1].strip()
-        if tokenizer_type == "pinyin":
-            text = convert_char_to_pinyin([text], polyphone=True)[0]
+        if tokenizer_type == "phonemizer":
+            text = convert_text_to_phonemes([text])[0]
 
         for t in text:
             if t not in vocab and t not in miss_symbols_keep:

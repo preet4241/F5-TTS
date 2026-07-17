@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from echoforge_tts.eval.ecapa_tdnn import ECAPA_TDNN_SMALL
 from echoforge_tts.model.modules import MelSpec
-from echoforge_tts.model.utils import convert_char_to_pinyin
+from echoforge_tts.model.utils import convert_text_to_phonemes
 
 
 # seedtts testset metainfo: utt, prompt_text, prompt_wav, gt_text, gt_wav
@@ -72,7 +72,7 @@ def padded_mel_batch(ref_mels):
 def get_inference_prompt(
     metainfo,
     speed=1.0,
-    tokenizer="pinyin",
+    tokenizer="phonemizer",
     polyphone=True,
     target_sample_rate=24000,
     n_fft=1024,
@@ -121,8 +121,8 @@ def get_inference_prompt(
         if len(prompt_text[-1].encode("utf-8")) == 1:
             prompt_text = prompt_text + " "
         text = [prompt_text + gt_text]
-        if tokenizer == "pinyin":
-            text_list = convert_char_to_pinyin(text, polyphone=polyphone)
+        if tokenizer == "phonemizer":
+            text_list = convert_text_to_phonemes(text)
         else:
             text_list = text
 
@@ -282,21 +282,13 @@ def get_librispeech_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path
 
 
 def load_asr_model(lang, ckpt_dir=""):
-    if lang == "zh":
-        from funasr import AutoModel
-
-        model = AutoModel(
-            model=os.path.join(ckpt_dir, "paraformer-zh"),
-            # vad_model = os.path.join(ckpt_dir, "fsmn-vad"),
-            # punc_model = os.path.join(ckpt_dir, "ct-punc"),
-            # spk_model = os.path.join(ckpt_dir, "cam++"),
-            disable_update=True,
-        )  # following seed-tts setting
-    elif lang == "en":
+    if lang in ("en", "hi"):
         from faster_whisper import WhisperModel
 
         model_size = "large-v3" if ckpt_dir == "" else ckpt_dir
         model = WhisperModel(model_size, device="cuda", compute_type="float16")
+    else:
+        raise NotImplementedError(f"lang '{lang}' not supported. Supported: 'en', 'hi'.")
     return model
 
 
@@ -306,36 +298,26 @@ def load_asr_model(lang, ckpt_dir=""):
 def run_asr_wer(args):
     rank, lang, test_set, ckpt_dir = args
 
-    if lang == "zh":
-        import zhconv
-
-        torch.cuda.set_device(rank)
-    elif lang == "en":
+    if lang in ("en", "hi"):
         os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
     else:
-        raise NotImplementedError(
-            "lang support only 'zh' (funasr paraformer-zh), 'en' (faster-whisper-large-v3), for now."
-        )
+        raise NotImplementedError(f"lang '{lang}' not supported. Supported: 'en', 'hi'.")
 
     asr_model = load_asr_model(lang, ckpt_dir=ckpt_dir)
 
-    from zhon.hanzi import punctuation
-
-    punctuation_all = punctuation + string.punctuation
+    punctuation_all = string.punctuation
     wer_results = []
 
     from jiwer import process_words
 
     for gen_wav, prompt_wav, truth in tqdm(test_set):
-        if lang == "zh":
-            res = asr_model.generate(input=gen_wav, batch_size_s=300, disable_pbar=True)
-            hypo = res[0]["text"]
-            hypo = zhconv.convert(hypo, "zh-cn")
-        elif lang == "en":
+        if lang == "en":
             segments, _ = asr_model.transcribe(gen_wav, beam_size=5, language="en")
-            hypo = ""
-            for segment in segments:
-                hypo = hypo + " " + segment.text
+        elif lang == "hi":
+            segments, _ = asr_model.transcribe(gen_wav, beam_size=5, language="hi")
+        hypo = ""
+        for segment in segments:
+            hypo = hypo + " " + segment.text
 
         raw_truth = truth
         raw_hypo = hypo
@@ -347,12 +329,10 @@ def run_asr_wer(args):
         truth = truth.replace("  ", " ")
         hypo = hypo.replace("  ", " ")
 
-        if lang == "zh":
-            truth = " ".join([x for x in truth])
-            hypo = " ".join([x for x in hypo])
-        elif lang == "en":
-            truth = truth.lower()
-            hypo = hypo.lower()
+        # Hindi has no uppercase; English is lowercased for case-insensitive WER.
+        # Both use space-separated word comparison (no character splitting needed).
+        truth = truth.lower()
+        hypo = hypo.lower()
 
         measures = process_words(truth, hypo)
         wer = measures.wer

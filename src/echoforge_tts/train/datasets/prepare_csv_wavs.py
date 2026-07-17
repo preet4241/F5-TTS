@@ -34,7 +34,7 @@ import torchaudio
 from datasets.arrow_writer import ArrowWriter
 from tqdm import tqdm
 
-from echoforge_tts.model.utils import convert_char_to_pinyin
+from echoforge_tts.model.utils import convert_text_to_phonemes
 
 
 PRETRAINED_VOCAB_PATH = files("echoforge_tts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
@@ -74,7 +74,7 @@ def graceful_exit():
             executor.shutdown(wait=False)
 
 
-def process_audio_file(audio_path, text, polyphone):
+def process_audio_file(audio_path, text, _polyphone=None):
     """Process a single audio file by checking its existence and extracting duration."""
     if not Path(audio_path).exists():
         print(f"audio {audio_path} not found, skipping")
@@ -89,16 +89,16 @@ def process_audio_file(audio_path, text, polyphone):
         return None
 
 
-def batch_convert_texts(texts, polyphone, batch_size=BATCH_SIZE):
-    """Convert a list of texts to pinyin in batches."""
+def batch_convert_texts(texts, batch_size=BATCH_SIZE):
+    """Convert a list of texts to phoneme sequences in batches."""
     converted_texts = []
     for i in tqdm(
         range(0, len(texts), batch_size),
         total=(len(texts) + batch_size - 1) // batch_size,
-        desc="Converting texts to pinyin",
+        desc="Converting texts to phonemes",
     ):
         batch = texts[i : i + batch_size]
-        converted_batch = convert_char_to_pinyin(batch, polyphone=polyphone)
+        converted_batch = convert_text_to_phonemes(batch)
         converted_texts.extend(converted_batch)
     return converted_texts
 
@@ -109,7 +109,6 @@ def prepare_csv_wavs_dir(input_path, num_workers=None):
         raise ValueError(f"input must be a .csv file: {input_path}")
     audio_path_text_pairs = read_audio_text_pairs(Path(input_path).expanduser().as_posix())
 
-    polyphone = True
     total_files = len(audio_path_text_pairs)
     if total_files == 0:
         raise RuntimeError("No valid rows found in CSV.")
@@ -130,7 +129,7 @@ def prepare_csv_wavs_dir(input_path, num_workers=None):
             for i in range(0, len(audio_path_text_pairs), CHUNK_SIZE):
                 chunk = audio_path_text_pairs[i : i + CHUNK_SIZE]
                 # Submit futures in order
-                chunk_futures = [executor.submit(process_audio_file, pair[0], pair[1], polyphone) for pair in chunk]
+                chunk_futures = [executor.submit(process_audio_file, pair[0], pair[1], None) for pair in chunk]
 
                 # Iterate over futures in the original submission order to preserve ordering
                 for future in tqdm(
@@ -154,7 +153,7 @@ def prepare_csv_wavs_dir(input_path, num_workers=None):
 
     # Batch process text conversion
     raw_texts = [item[1] for item in processed]
-    converted_texts = batch_convert_texts(raw_texts, polyphone, batch_size=BATCH_SIZE)
+    converted_texts = batch_convert_texts(raw_texts, batch_size=BATCH_SIZE)
 
     # Prepare final results
     sub_result = []
