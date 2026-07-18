@@ -665,6 +665,9 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
 
     alpha = 0.5
     _max = 1.0
+    # NOTE: Slicer and librosa.load are hardcoded to 24 kHz here — this is the
+    # EchoForge_v1_Base / F5-TTS preprocessing path.  If you add a 16 kHz Raon
+    # finetuning pipeline, parameterise this function's sample rate instead.
     slicer = Slicer(24000)
 
     num = 0
@@ -682,7 +685,7 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
             if tmp_max > 1:
                 chunk /= tmp_max
             chunk = (chunk / tmp_max * (_max * alpha)) + (1 - alpha) * chunk
-            wavfile.write(file_segment, 24000, (chunk * 32767).astype(np.int16))
+            wavfile.write(file_segment, 24000, (chunk * 32767).astype(np.int16))  # 24 kHz EchoForge path
 
             try:
                 text = transcribe(file_segment, language)
@@ -870,6 +873,9 @@ def calculate_train(
     file_duration = os.path.join(path_project, "duration.json")
 
     hop_length = 256
+    # NOTE: this is the EchoForge_v1_Base training sample rate (24 kHz).
+    # If you introduce a 16 kHz training pipeline for Raon-OpenTTS-1B, pass
+    # sampling_rate as a parameter rather than hardcoding it here.
     sampling_rate = 24000
 
     if not os.path.isfile(file_duration):

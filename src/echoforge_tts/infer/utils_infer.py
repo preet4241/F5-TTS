@@ -102,6 +102,91 @@ def chunk_text(text, max_chars=135):
     return chunks
 
 
+# ── HiFi-GAN vocoder wrapper (sbhifigan16k) ──────────────────────────────────
+
+
+class SbHiFiGANVocoder(torch.nn.Module):
+    """
+    Thin wrapper around SpeechBrain's pretrained HiFi-GAN (LibriTTS-16kHz).
+
+    Exposes the same `.decode(mel)` interface as Vocos so downstream dispatch
+    code can use a single branch for both vocos and sbhifigan16k.
+
+    Checkpoint source: speechbrain/tts-hifigan-libritts-16kHz
+    Expected input:    mel (B, n_mel, T) — matches MelSpec output convention
+    """
+
+    def __init__(self, hifigan_model):
+        super().__init__()
+        self.hifigan = hifigan_model
+
+    @torch.inference_mode()
+    def decode(self, mel: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            mel: (B, n_mel, T) float tensor — standard MelSpec convention
+        Returns:
+            audio: (B, 1, T_audio) float tensor
+        """
+        # SpeechBrain HIFIGAN.decode_batch expects (B, T, n_mel) — transpose first
+        return self.hifigan.decode_batch(mel.transpose(1, 2))
+
+
+# ── Vocab-size mismatch handler ───────────────────────────────────────────────
+
+
+def expand_model_embeddings(model, new_vocab_size: int, init_std: float = 0.02):
+    """
+    Expand (or contract) the text_embed layer of a CFM-wrapped DiT/UNetT model
+    to match new_vocab_size.
+
+    Called after load_checkpoint() when the pretrained checkpoint's embedding
+    table is a different size than the current tokenizer's vocab.  Concrete case:
+    Raon-OpenTTS-1B checkpoint has 5,512 English-character entries; our
+    Hindi+English phonemizer vocab is likely a different size.
+
+    Strategy:
+      - Copy the overlapping prefix (min(old, new) rows) verbatim.
+      - Any new rows beyond old_size are random-initialized (mean=0, std=init_std).
+      - Rows truncated if new_vocab_size < old_size (rare, but handled cleanly).
+
+    All other model weights are untouched.
+    """
+    text_embed = model.transformer.text_embed  # nn.Embedding
+    old_size = text_embed.weight.shape[0]
+
+    if old_size == new_vocab_size:
+        print(f"[expand_model_embeddings] vocab size already matches ({old_size}) — no change")
+        return model
+
+    device    = text_embed.weight.device
+    dtype     = text_embed.weight.dtype
+    embed_dim = text_embed.weight.shape[1]
+
+    new_embed = torch.nn.Embedding(new_vocab_size, embed_dim)
+    # Start from zeros then fill
+    new_embed.weight.data = torch.zeros(new_vocab_size, embed_dim, dtype=dtype)
+
+    copy_size = min(old_size, new_vocab_size)
+    new_embed.weight.data[:copy_size] = text_embed.weight.data[:copy_size].detach().clone()
+
+    if new_vocab_size > old_size:
+        # Initialize unseen tokens with small random values (same scale as Kaiming default)
+        torch.nn.init.normal_(new_embed.weight.data[old_size:], mean=0.0, std=init_std)
+
+    new_embed = new_embed.to(device=device, dtype=dtype)
+    model.transformer.text_embed = new_embed
+
+    direction = "expanded" if new_vocab_size > old_size else "truncated"
+    print(
+        f"[expand_model_embeddings] text_embed {direction}: "
+        f"{old_size} → {new_vocab_size} (embed_dim={embed_dim})"
+    )
+    return model
+
+
+# ── Vocoder loading ───────────────────────────────────────────────────────────
+
 # load vocoder
 def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=device, hf_cache_dir=None):
     if vocoder_name == "vocos":
@@ -142,6 +227,38 @@ def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=dev
 
         vocoder.remove_weight_norm()
         vocoder = vocoder.eval().to(device)
+    elif vocoder_name == "sbhifigan16k":
+        # SpeechBrain HiFi-GAN trained on LibriTTS at 16 kHz.
+        # HF repo: speechbrain/tts-hifigan-libritts-16kHz
+        # Requires: pip install speechbrain
+        try:
+            from speechbrain.pretrained import HIFIGAN as SbHIFIGAN
+        except ImportError:
+            raise ImportError(
+                "SpeechBrain is required for the sbhifigan16k vocoder. "
+                "Install it with:  pip install speechbrain"
+            )
+        HF_REPO = "speechbrain/tts-hifigan-libritts-16kHz"
+        if is_local:
+            # local_path should be a directory containing the SpeechBrain model artefacts
+            # (hyperparams.yaml + generator.ckpt).
+            # TODO (UNCONFIRMED): 1b.yaml sets vocoder.local_path: null — the actual runtime
+            #   value is populated elsewhere (CLI flag / env var / code default in the Raon
+            #   repo).  The README download step places the file at
+            #   pretrained_models/generator.ckpt — using that directory as the placeholder.
+            #   Update once confirmed how Raon-OpenTTS populates this field at runtime
+            #   (check src/f5_tts/infer/infer_cli.py in the Raon repo).
+            save_dir = local_path if local_path else "pretrained_models/hifigan-16k"
+            print(f"[sbhifigan16k] Loading SpeechBrain HiFi-GAN from local path: {save_dir}")
+        else:
+            save_dir = hf_cache_dir or "pretrained_models/hifigan-16k"
+            print(f"[sbhifigan16k] Downloading SpeechBrain HiFi-GAN from {HF_REPO}")
+        hifigan = SbHIFIGAN.from_hparams(
+            source=HF_REPO,
+            savedir=save_dir,
+            run_opts={"device": device},
+        )
+        vocoder = SbHiFiGANVocoder(hifigan).eval().to(device)
     return vocoder
 
 
@@ -244,7 +361,22 @@ def load_model(
     ode_method=ode_method,
     use_ema=True,
     device=device,
+    # ── Mel-spec overrides ────────────────────────────────────────────────────
+    # Set these for non-default configs (e.g. Raon-1B uses 16 kHz / 80 mel bands).
+    # When None, the module-level defaults (24 kHz / 100 bands) are used unchanged,
+    # so all existing EchoForge_v1_Base / E2TTS call sites require no changes.
+    n_mel_channels_override=None,
+    target_sample_rate_override=None,
+    n_fft_override=None,
+    hop_length_override=None,
+    win_length_override=None,
 ):
+    _n_mel  = n_mel_channels_override    if n_mel_channels_override    is not None else n_mel_channels
+    _sr     = target_sample_rate_override if target_sample_rate_override is not None else target_sample_rate
+    _n_fft  = n_fft_override             if n_fft_override             is not None else n_fft
+    _hop    = hop_length_override        if hop_length_override        is not None else hop_length
+    _win    = win_length_override        if win_length_override        is not None else win_length
+
     if vocab_file == "":
         from echoforge_tts.config.paths import VOCAB_PATH
         vocab_file = str(VOCAB_PATH)
@@ -256,13 +388,13 @@ def load_model(
 
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
     model = CFM(
-        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
+        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=_n_mel),
         mel_spec_kwargs=dict(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
-            n_mel_channels=n_mel_channels,
-            target_sample_rate=target_sample_rate,
+            n_fft=_n_fft,
+            hop_length=_hop,
+            win_length=_win,
+            n_mel_channels=_n_mel,
+            target_sample_rate=_sr,
             mel_spec_type=mel_spec_type,
         ),
         odeint_kwargs=dict(
@@ -508,7 +640,8 @@ def infer_batch_process(
             generated = generated.to(torch.float32)  # generated mel spectrogram
             generated = generated[:, ref_audio_len:, :]
             generated = generated.permute(0, 2, 1)
-            if mel_spec_type == "vocos":
+            if mel_spec_type in ("vocos", "sbhifigan16k"):
+                # Both Vocos and SbHiFiGANVocoder expose .decode(mel)
                 generated_wave = vocoder.decode(generated)
             elif mel_spec_type == "bigvgan":
                 generated_wave = vocoder(generated)

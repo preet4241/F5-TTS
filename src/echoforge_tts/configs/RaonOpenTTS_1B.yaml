@@ -1,0 +1,86 @@
+hydra:
+  run:
+    dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+datasets:
+  # We do NOT train on Raon's data pool — this section exists only because Hydra requires it.
+  # Fill in your own Hindi dataset name here when you reach the finetuning phase.
+  name: echoforge_hindi_placeholder
+  batch_size_per_gpu: 14000  # from Raon 1b.yaml (training reference only — not used for our finetune yet)
+  batch_size_type: frame
+  max_samples: 64
+  num_workers: 16
+
+optim:
+  # Training-reference values from Raon 1b.yaml — kept for documentation only.
+  # Override these when configuring the actual Hindi finetuning run.
+  epochs: 10
+  learning_rate: 1e-4      # Raon training LR (reference); our finetune will use ~1e-5
+  num_warmup_updates: 50000
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bnb_optimizer: False
+
+model:
+  name: RaonOpenTTS_1B
+  # Raon uses "custom" tokenizer with a vocab.txt file — exactly how our VOCAB_PATH system works.
+  # Their original tokenizer_path points at their English-char vocab (5,512 tokens).
+  # We override this to our canonical Hindi+English phonemizer vocab (VOCAB_PATH).
+  # Note: the text_embed layer in the pretrained checkpoint was trained on 5,512 English chars.
+  #       expand_model_embeddings() in utils_infer.py handles the vocab-size mismatch at load time.
+  tokenizer: custom
+  tokenizer_path: data/echoforge_hindi_en_phonemizer/vocab.txt  # = VOCAB_PATH constant
+  backbone: DiT
+  arch:
+    # ── Verified from Raon 1b.yaml (user-provided direct source) ──────────────
+    dim: 1408
+    depth: 28
+    heads: 24
+    ff_mult: 4
+    text_dim: 512
+    text_mask_padding: True
+    qk_norm: null            # same as F5-TTS default
+    conv_layers: 4           # same as F5-TTS default
+    pe_attn_head: null       # same as F5-TTS default
+    attn_mask_enabled: False
+    checkpoint_activations: False  # flip to True later for VRAM savings if needed
+    # ── New fields present in 1b.yaml, not in EchoForge_v1_Base ──────────────
+    logit_softcapping: null  # verified from 1b.yaml
+    post_norm: False         # verified from 1b.yaml
+    norm_type: rmsnorm       # verified from 1b.yaml
+  mel_spec:
+    # ── All values verified from 1b.yaml ─────────────────────────────────────
+    target_sample_rate: 16000   # differs from EchoForge_v1_Base (24000) — cascade-checked
+    n_mel_channels: 80          # differs from EchoForge_v1_Base (100)
+    hop_length: 256
+    win_length: 1024
+    n_fft: 1024
+    # IMPORTANT: must be exactly "sbhifigan16k" — this is the internal name from 1b.yaml.
+    # Do NOT write "hifigan" or any other variant; the vocoder dispatch keyed on this string.
+    mel_spec_type: sbhifigan16k
+  vocoder:
+    is_local: True   # differs from F5-TTS (False) — Raon expects a local checkpoint, not HF auto-download
+    # TODO (UNCONFIRMED): 1b.yaml sets local_path: null, meaning the runtime value is set
+    #   elsewhere (CLI flag, env var, or code default). Per the README download step, the file
+    #   lives at pretrained_models/generator.ckpt — using that as a placeholder until confirmed.
+    #   See prompt notes "STILL UNVERIFIED" point 1 for how to find the actual code path.
+    local_path: pretrained_models/generator.ckpt  # PLACEHOLDER — verify against Raon infer_cli.py
+  checkpoint:
+    # Verified from 1b.yaml
+    huggingface_repo: "KRAFTON/Raon-OpenTTS-1B"
+    # Checkpoint file: model_last.pt (confirmed from Raon README)
+    huggingface_path: "hf://KRAFTON/Raon-OpenTTS-1B/model_last.pt"
+    total_params: "1048M (~1.05B)"
+  inference:
+    nfe_steps: 32  # verified from 1b.yaml
+
+ckpts:
+  logger: wandb
+  wandb_project: EchoForge-Hindi
+  wandb_run_name: ${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}
+  wandb_resume_id: null
+  log_samples: True
+  save_per_updates: 50000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000
+  save_dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}

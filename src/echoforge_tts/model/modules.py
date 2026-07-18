@@ -77,6 +77,56 @@ def get_bigvgan_mel_spectrogram(
     return mel_spec
 
 
+def get_hifigan_mel_spectrogram(
+    waveform,
+    n_fft=1024,
+    n_mel_channels=80,
+    target_sample_rate=16000,
+    hop_length=256,
+    win_length=1024,
+    fmin=0,
+    fmax=8000,  # Nyquist for 16 kHz; update if using a different sample rate
+    center=False,
+):
+    """
+    Mel spectrogram extraction tuned for SpeechBrain sbhifigan16k (LibriTTS-16kHz).
+    Architecture mirrors get_bigvgan_mel_spectrogram but defaults to 16 kHz params.
+    fmax defaults to Nyquist (target_sample_rate / 2) — override if your checkpoint differs.
+    """
+    device = waveform.device
+    key = f"{n_fft}_{n_mel_channels}_{target_sample_rate}_{hop_length}_{win_length}_{fmin}_{fmax}_{device}"
+
+    if key not in mel_basis_cache:
+        mel = librosa_mel_fn(sr=target_sample_rate, n_fft=n_fft, n_mels=n_mel_channels, fmin=fmin, fmax=fmax)
+        mel_basis_cache[key] = torch.from_numpy(mel).float().to(device)
+        hann_window_cache[key] = torch.hann_window(win_length).to(device)
+
+    mel_basis = mel_basis_cache[key]
+    hann_window = hann_window_cache[key]
+
+    padding = (n_fft - hop_length) // 2
+    waveform = torch.nn.functional.pad(waveform.unsqueeze(1), (padding, padding), mode="reflect").squeeze(1)
+
+    spec = torch.stft(
+        waveform,
+        n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window=hann_window,
+        center=center,
+        pad_mode="reflect",
+        normalized=False,
+        onesided=True,
+        return_complex=True,
+    )
+    spec = torch.sqrt(torch.view_as_real(spec).pow(2).sum(-1) + 1e-9)
+
+    mel_spec = torch.matmul(mel_basis, spec)
+    mel_spec = torch.log(torch.clamp(mel_spec, min=1e-5))
+
+    return mel_spec
+
+
 def get_vocos_mel_spectrogram(
     waveform,
     n_fft=1024,
@@ -120,7 +170,10 @@ class MelSpec(nn.Module):
         mel_spec_type="vocos",
     ):
         super().__init__()
-        assert mel_spec_type in ["vocos", "bigvgan"], print("We only support two extract mel backend: vocos or bigvgan")
+        assert mel_spec_type in ["vocos", "bigvgan", "sbhifigan16k"], (
+            f"Unsupported mel_spec_type '{mel_spec_type}'. "
+            "Supported backends: vocos | bigvgan | sbhifigan16k"
+        )
 
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -132,6 +185,8 @@ class MelSpec(nn.Module):
             self.extractor = get_vocos_mel_spectrogram
         elif mel_spec_type == "bigvgan":
             self.extractor = get_bigvgan_mel_spectrogram
+        elif mel_spec_type == "sbhifigan16k":
+            self.extractor = get_hifigan_mel_spectrogram
 
         self.register_buffer("dummy", torch.tensor(0), persistent=False)
 

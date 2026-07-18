@@ -138,6 +138,32 @@ DEFAULT_TTS_MODEL_CFG = [
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
 
+# ── Raon-OpenTTS-1B config ─────────────────────────────────────────────────
+# Checkpoint: model_last.pt confirmed from Raon README.
+# Arch values: verified from 1b.yaml (user-provided direct source).
+# Vocab: we use our canonical VOCAB_PATH (Hindi+English phonemizer), NOT Raon's
+#        original 5,512-entry English-char vocab.  expand_model_embeddings()
+#        handles the size mismatch at load time.
+RAON_1B_MODEL_CFG = [
+    "hf://KRAFTON/Raon-OpenTTS-1B/model_last.pt",
+    json.dumps(dict(
+        dim=1408,
+        depth=28,
+        heads=24,
+        ff_mult=4,
+        text_dim=512,
+        text_mask_padding=True,
+        qk_norm=None,
+        conv_layers=4,
+        pe_attn_head=None,
+        attn_mask_enabled=False,
+        checkpoint_activations=False,
+        logit_softcapping=None,
+        post_norm=False,
+        norm_type="rmsnorm",
+    )),
+]
+
 
 # load models
 
@@ -148,6 +174,48 @@ def load_echoforge():
     ckpt_path = str(cached_path(DEFAULT_TTS_MODEL_CFG[0]))
     echoforge_model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
     return load_model(DiT, echoforge_model_cfg, ckpt_path)
+
+
+def load_raon_1b():
+    """
+    Load Raon-OpenTTS-1B (1.05B DiT) for inference.
+
+    Steps:
+      1. Download model_last.pt from KRAFTON/Raon-OpenTTS-1B on HuggingFace.
+      2. Build the model with 16 kHz / 80-band mel-spec overrides.
+      3. Expand (or contract) the text_embed layer to match our Hindi+English
+         phonemizer vocab — the checkpoint's original embed was trained on 5,512
+         English characters; new Hindi-phoneme tokens are randomly initialised.
+
+    Requires:
+      - pip install speechbrain  (for the sbhifigan16k vocoder)
+      - pretrained_models/hifigan-16k/ vocoder files (auto-downloaded on first run)
+    """
+    from echoforge_tts.infer.utils_infer import expand_model_embeddings
+    from echoforge_tts.model.utils import get_tokenizer
+    from echoforge_tts.config.paths import VOCAB_PATH
+
+    ckpt_path = str(cached_path(RAON_1B_MODEL_CFG[0]))
+    raon_model_cfg = json.loads(RAON_1B_MODEL_CFG[1])
+
+    model = load_model(
+        DiT,
+        raon_model_cfg,
+        ckpt_path,
+        mel_spec_type="sbhifigan16k",
+        n_mel_channels_override=80,
+        target_sample_rate_override=16000,
+    )
+
+    # Detect and reconcile vocab-size mismatch between the pretrained checkpoint
+    # (5,512 English chars) and our tokenizer (variable size).
+    _, vocab_size = get_tokenizer(str(VOCAB_PATH), "custom")
+    model = expand_model_embeddings(model, vocab_size)
+
+    return model
+
+
+raon_1b_ema_model = None  # lazy-loaded on first use via load_raon_1b()
 
 
 def load_e2tts():
