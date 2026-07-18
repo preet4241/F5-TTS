@@ -908,11 +908,53 @@ def calculate_train(
 
     avg_gpu_memory = total_memory / gpu_count
 
-    # rough estimate of batch size
+    # ------------------------------------------------------------------ #
+    #  GPU-aware batch size estimate — with safety clamping               #
+    # ------------------------------------------------------------------ #
+    # Magic numbers origin: formula tuned for A100-class (40–80 GB) GPUs.
+    # Without guards it can produce zero/negative on low-memory devices.
+    _warnings: list[str] = []
+
     if batch_size_type == "frame":
-        batch_size_per_gpu = max(int(38400 * (avg_gpu_memory - 5) / 75), int(max_sample_length))
+        # Light guard-rail: if reported memory is below the threshold where
+        # the formula starts becoming unreliable, fall back to a known-safe
+        # fixed batch size rather than trusting the math.
+        _LOW_MEM_THRESHOLD_GB = 6.0       # below this → formula unreliable
+        _CONSERVATIVE_FRAME_BATCH = 1920  # ~6 GB effective, safe for T4-class
+
+        if avg_gpu_memory < _LOW_MEM_THRESHOLD_GB:
+            batch_size_per_gpu = _CONSERVATIVE_FRAME_BATCH
+            _warnings.append(
+                f"⚠️  Low GPU memory detected ({avg_gpu_memory:.1f} GB < {_LOW_MEM_THRESHOLD_GB} GB). "
+                f"Using conservative frame batch size {_CONSERVATIVE_FRAME_BATCH}. "
+                "If training is slow or OOM errors occur, reduce batch size manually."
+            )
+        else:
+            # Clamp (avg_gpu_memory - 5) to ≥ 1 so the formula never yields
+            # zero or negative even if CUDA startup overhead shaves memory.
+            effective_mem_gb = max(avg_gpu_memory - 5.0, 1.0)
+            batch_size_per_gpu = max(int(38400 * effective_mem_gb / 75), int(max_sample_length))
+
     elif batch_size_type == "sample":
-        batch_size_per_gpu = int(200 / (total_duration / total_samples))
+        avg_duration = total_duration / total_samples  # seconds per sample
+        # Clamp: very long clips make avg_duration → ∞ → batch_size → 0.
+        # Cap denominator at 200 s (200/200 = 1, the safe minimum).
+        _MAX_AVG_DURATION = 200.0
+        if avg_duration > _MAX_AVG_DURATION:
+            _warnings.append(
+                f"⚠️  Average audio clip length is very long ({avg_duration:.1f} s). "
+                "Using minimum safe batch size 1. Consider using shorter clips for better training dynamics."
+            )
+        avg_duration_clamped = min(avg_duration, _MAX_AVG_DURATION)
+        batch_size_per_gpu = int(200 / avg_duration_clamped)
+
+    # Final safety clamp — last-line-of-defense regardless of path taken above.
+    if batch_size_per_gpu < 1:
+        _warnings.append(
+            f"⚠️  Calculated batch size was {batch_size_per_gpu} (invalid). "
+            "Forced to minimum safe value 1."
+        )
+        batch_size_per_gpu = 1
 
     if total_samples < 64:
         max_samples = int(total_samples * 0.25)
@@ -935,13 +977,18 @@ def calculate_train(
     else:
         learning_rate = 7.5e-5
 
+    # Combine sample count with any safety warnings for the UI info field.
+    info = str(total_samples)
+    if _warnings:
+        info = str(total_samples) + "\n" + "\n".join(_warnings)
+
     return (
         epochs,
         learning_rate,
         batch_size_per_gpu,
         max_samples,
         num_warmup_updates,
-        total_samples,
+        info,
     )
 
 
