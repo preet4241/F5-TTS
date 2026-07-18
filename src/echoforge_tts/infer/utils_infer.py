@@ -246,7 +246,8 @@ def load_model(
     device=device,
 ):
     if vocab_file == "":
-        vocab_file = str(files("echoforge_tts").joinpath("infer/examples/vocab.txt"))
+        from echoforge_tts.config.paths import VOCAB_PATH
+        vocab_file = str(VOCAB_PATH)
     tokenizer = "custom"
 
     print("\nvocab : ", vocab_file)

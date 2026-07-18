@@ -29,6 +29,7 @@ from safetensors.torch import load_file, save_file
 from scipy.io import wavfile
 
 from echoforge_tts.api import F5TTS
+from echoforge_tts.config.paths import VOCAB_PATH
 from echoforge_tts.infer.utils_infer import transcribe
 from echoforge_tts.model.utils import convert_text_to_phonemes
 
@@ -748,8 +749,6 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
     file_metadata = os.path.join(path_project, "metadata.csv")
     file_raw = os.path.join(path_project, "raw.arrow")
     file_duration = os.path.join(path_project, "duration.json")
-    file_vocab = os.path.join(path_project, "vocab.txt")
-
     if not os.path.isfile(file_metadata):
         return "The file was not found in " + file_metadata, ""
 
@@ -823,24 +822,24 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
 
     new_vocal = ""
     if not ch_tokenizer:
-        if not os.path.isfile(file_vocab):
-            file_vocab_finetune = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
-            if not os.path.isfile(file_vocab_finetune):
-                return "Error: Vocabulary file 'Emilia_ZH_EN_pinyin' not found!", ""
-            shutil.copy2(file_vocab_finetune, file_vocab)
-
-        with open(file_vocab, "r", encoding="utf-8-sig") as f:
+        # Use the canonical phonemizer vocab (auto-created if not yet present)
+        from echoforge_tts.model.utils import _ensure_vocab_exists
+        _ensure_vocab_exists(VOCAB_PATH)
+        with open(VOCAB_PATH, "r", encoding="utf-8-sig") as f:
             vocab_char_map = {}
             for i, char in enumerate(f):
                 vocab_char_map[char[:-1]] = i
         vocab_size = len(vocab_char_map)
 
     else:
-        with open(file_vocab, "w", encoding="utf-8-sig") as f:
-            for vocab in sorted(text_vocab_set):
+        # Build vocab from this dataset's text and write to canonical location
+        VOCAB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        sorted_vocab = [" "] + sorted(v for v in text_vocab_set if v != " ")
+        with open(VOCAB_PATH, "w", encoding="utf-8-sig") as f:
+            for vocab in sorted_vocab:
                 f.write(vocab + "\n")
                 new_vocal += vocab + "\n"
-        vocab_size = len(text_vocab_set)
+        vocab_size = len(sorted_vocab)
 
     if error_files != []:
         error_text = "\n".join([" = ".join(item) for item in error_files])
@@ -1021,17 +1020,15 @@ def vocab_extend(project_name, symbols, model_type):
 
     name_project = project_name
     path_project = _safe_project_path(path_data, name_project)
-    file_vocab_project = os.path.join(path_project, "vocab.txt")
 
-    file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
-    if not os.path.isfile(file_vocab):
-        return f"the file {file_vocab} not found !"
+    if not VOCAB_PATH.is_file():
+        return f"Canonical vocab not found at {VOCAB_PATH}. Run data preparation first."
 
     symbols = symbols.split(",")
     if symbols == []:
         return "Symbols to extend not found."
 
-    with open(file_vocab, "r", encoding="utf-8-sig") as f:
+    with open(VOCAB_PATH, "r", encoding="utf-8-sig") as f:
         data = f.read()
         vocab = data.split("\n")
     vocab_check = set(vocab)
@@ -1053,7 +1050,7 @@ def vocab_extend(project_name, symbols, model_type):
 
     vocab.append("")
 
-    with open(file_vocab_project, "w", encoding="utf-8") as f:
+    with open(VOCAB_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(vocab))
 
     if model_type == "EchoForge_v1_Base":
@@ -1084,11 +1081,10 @@ def vocab_check(project_name, tokenizer_type):
 
     file_metadata = os.path.join(path_project, "metadata.csv")
 
-    file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
-    if not os.path.isfile(file_vocab):
-        return f"the file {file_vocab} not found !", ""
+    if not VOCAB_PATH.is_file():
+        return f"Canonical vocab not found at {VOCAB_PATH}. Run data preparation first.", ""
 
-    with open(file_vocab, "r", encoding="utf-8-sig") as f:
+    with open(VOCAB_PATH, "r", encoding="utf-8-sig") as f:
         data = f.read()
         vocab = data.split("\n")
         vocab = set(vocab)
@@ -1199,7 +1195,7 @@ def infer(
         if last_ema != use_ema:
             last_ema = use_ema
 
-        vocab_file = os.path.join(path_data, project, "vocab.txt")
+        vocab_file = str(VOCAB_PATH)
 
         tts_api = F5TTS(
             model=exp_name, ckpt_file=file_checkpoint, vocab_file=vocab_file, device=device_test, use_ema=use_ema

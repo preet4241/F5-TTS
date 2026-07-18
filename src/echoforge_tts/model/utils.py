@@ -109,23 +109,38 @@ def list_str_to_idx(
 
 def get_tokenizer(dataset_name, tokenizer: str = "phonemizer"):
     """
-    tokenizer   - "phonemizer" use espeak-ng G2P for Hindi (Devanagari) and English text, need .txt vocab_file
-                  vocab folder naming convention: {dataset_name}_phonemizer/vocab.txt
-                - "char" for char-wise tokenizer, need .txt vocab_file
+    tokenizer   - "phonemizer" use espeak-ng G2P for Hindi (Devanagari) and English text.
+                  Reads from the single canonical VOCAB_PATH (echoforge_tts.config.paths).
+                  ``dataset_name`` is accepted for backward compatibility / logging but the
+                  actual file location is always the fixed constant — never a dynamic path.
+                - "char" for char-wise tokenizer, need .txt vocab_file at
+                  {dataset_name}_char/vocab.txt (relative to data/ dir)
                 - "byte" for utf-8 tokenizer
                 - "custom" if you're directly passing in a path to the vocab.txt you want to use
-    vocab_size  - if use "phonemizer", derived from phoneme symbols produced by espeak-ng for the dataset
+    vocab_size  - if use "phonemizer", derived from phoneme symbols in the canonical vocab file
                 - if use "char", derived from unfiltered character & symbol counts of custom dataset
                 - if use "byte", set to 256 (unicode byte range)
     """
+    if tokenizer == "phonemizer":
+        from echoforge_tts.config.paths import VOCAB_PATH
+
+        tokenizer_path = VOCAB_PATH
+        _ensure_vocab_exists(tokenizer_path)
+
+    elif tokenizer == "char":
+        tokenizer_path = os.path.join(
+            files("echoforge_tts").joinpath("../../data"), f"{dataset_name}_char/vocab.txt"
+        )
+
     if tokenizer in ["phonemizer", "char"]:
-        tokenizer_path = os.path.join(files("echoforge_tts").joinpath("../../data"), f"{dataset_name}_{tokenizer}/vocab.txt")
         with open(tokenizer_path, "r", encoding="utf-8") as f:
             vocab_char_map = {}
             for i, char in enumerate(f):
                 vocab_char_map[char[:-1]] = i
         vocab_size = len(vocab_char_map)
-        assert vocab_char_map[" "] == 0, "make sure space is of idx 0 in vocab.txt, cuz 0 is used for unknown char"
+        assert vocab_char_map.get(" ") == 0, (
+            "Space must be at index 0 in vocab.txt (used as the unknown-char sentinel)."
+        )
 
     elif tokenizer == "byte":
         vocab_char_map = None
@@ -139,6 +154,64 @@ def get_tokenizer(dataset_name, tokenizer: str = "phonemizer"):
         vocab_size = len(vocab_char_map)
 
     return vocab_char_map, vocab_size
+
+
+# Representative English + Hindi sentences used to bootstrap a minimal vocab
+# when the canonical vocab.txt does not yet exist (first-time setup).
+_BOOTSTRAP_TEXTS = [
+    "the quick brown fox jumps over the lazy dog",
+    "hello world how are you doing today I am fine thank you",
+    "one two three four five six seven eight nine ten",
+    "a e i o u b c d f g h j k l m n p q r s t v w x y z",
+    "नमस्ते आप कैसे हैं मैं ठीक हूँ धन्यवाद",
+    "एक दो तीन चार पाँच छह सात आठ नौ दस",
+    "यह एक परीक्षण है हिंदी और अंग्रेज़ी के लिए",
+    "Hello मेरा नाम EchoForge है यह एक TTS model है",
+]
+
+
+def _ensure_vocab_exists(vocab_path) -> None:
+    """Auto-create the canonical vocab.txt from bootstrap text if it does not exist.
+
+    This is idempotent — it does nothing when the file already exists.
+    The generated vocab is a minimal starting point; run prepare_csv_wavs.py
+    against your actual training data to get a proper full vocab.
+    """
+    from pathlib import Path
+
+    vocab_path = Path(vocab_path)
+    if vocab_path.exists():
+        return  # Already present — nothing to do.
+
+    print(
+        f"[EchoForge] vocab.txt not found at canonical path:\n"
+        f"  {vocab_path}\n"
+        f"  Generating bootstrap vocab from representative English+Hindi text …"
+    )
+
+    vocab_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Collect every unique phoneme symbol produced by espeak-ng.
+    chars: set[str] = set()
+    try:
+        phonemized = convert_text_to_phonemes(_BOOTSTRAP_TEXTS)
+        for char_list in phonemized:
+            chars.update(char_list)
+    except Exception as exc:
+        # espeak-ng not installed yet — fall back to raw ASCII symbols.
+        print(f"[EchoForge] phonemizer unavailable ({exc}); using ASCII fallback for bootstrap vocab.")
+        import string
+        chars.update(string.ascii_lowercase + string.ascii_uppercase + string.digits + string.punctuation)
+        chars.update(" \t\n")
+
+    # Space must be index 0 (sentinel for unknown chars).
+    sorted_chars = [" "] + sorted(c for c in chars if c != " ")
+
+    with open(vocab_path, "w", encoding="utf-8") as f:
+        for ch in sorted_chars:
+            f.write(ch + "\n")
+
+    print(f"[EchoForge] Bootstrap vocab written ({len(sorted_chars)} symbols) → {vocab_path}")
 
 
 # Language detection helpers

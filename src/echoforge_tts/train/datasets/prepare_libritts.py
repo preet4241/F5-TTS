@@ -68,10 +68,14 @@ def main():
     with open(f"{save_dir}/duration.json", "w", encoding="utf-8") as f:
         json.dump({"duration": duration_list}, f, ensure_ascii=False)
 
-    # vocab map, i.e. tokenizer
-    with open(f"{save_dir}/vocab.txt", "w") as f:
-        for vocab in sorted(text_vocab_set):
+    # vocab map — always written to the single canonical VOCAB_PATH
+    from echoforge_tts.config.paths import VOCAB_PATH
+    VOCAB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    sorted_vocab = [" "] + sorted(v for v in text_vocab_set if v != " ")
+    with open(VOCAB_PATH, "w", encoding="utf-8") as f:
+        for vocab in sorted_vocab:
             f.write(vocab + "\n")
+    print(f"Vocab ({len(sorted_vocab)} symbols) written → {VOCAB_PATH}")
 
     print(f"\nFor {dataset_name}, sample count: {len(result)}")
     print(f"For {dataset_name}, vocab size is: {len(text_vocab_set)}")

@@ -14,7 +14,6 @@ Notes:
 import concurrent.futures
 import multiprocessing
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -26,7 +25,6 @@ sys.path.append(os.getcwd())
 import argparse
 import csv
 import json
-from importlib.resources import files
 from pathlib import Path
 
 import soundfile as sf
@@ -34,10 +32,8 @@ import torchaudio
 from datasets.arrow_writer import ArrowWriter
 from tqdm import tqdm
 
+from echoforge_tts.config.paths import VOCAB_PATH
 from echoforge_tts.model.utils import convert_text_to_phonemes
-
-
-PRETRAINED_VOCAB_PATH = files("echoforge_tts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
 
 # Configuration constants
 BATCH_SIZE = 100  # Batch size for text conversion
@@ -231,7 +227,15 @@ def read_audio_text_pairs(csv_file_path):
     return audio_text_pairs
 
 
-def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_finetune):
+def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set):
+    """Save processed dataset to ``out_dir`` (raw.arrow + duration.json).
+
+    The vocab file is ALWAYS written to the canonical VOCAB_PATH
+    (``data/echoforge_hindi_en_phonemizer/vocab.txt``) regardless of which
+    ``out_dir`` the caller supplies — ensuring training and inference always
+    share a single, consistent vocab.  Space is written as the first entry
+    so it occupies index 0 (the unknown-char sentinel).
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(exist_ok=True, parents=True)
     print(f"\nSaving to {out_dir} ...")
@@ -242,20 +246,19 @@ def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_fine
             writer.write(line)
         writer.finalize()
 
-    # Save durations to JSON
+    # Save durations to JSON (stays in out_dir alongside the audio data)
     dur_json_path = out_dir / "duration.json"
     with open(dur_json_path.as_posix(), "w", encoding="utf-8") as f:
         json.dump({"duration": duration_list}, f, ensure_ascii=False)
 
-    # Handle vocab file - write only once based on finetune flag
-    voca_out_path = out_dir / "vocab.txt"
-    if is_finetune:
-        file_vocab_finetune = PRETRAINED_VOCAB_PATH.as_posix()
-        shutil.copy2(file_vocab_finetune, voca_out_path)
-    else:
-        with open(voca_out_path.as_posix(), "w") as f:
-            for vocab in sorted(text_vocab_set):
-                f.write(vocab + "\n")
+    # Write vocab to the single canonical location — never to out_dir.
+    VOCAB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Space must be first (index 0 = unknown-char sentinel)
+    sorted_vocab = [" "] + sorted(v for v in text_vocab_set if v != " ")
+    with open(VOCAB_PATH, "w", encoding="utf-8") as f:
+        for vocab in sorted_vocab:
+            f.write(vocab + "\n")
+    print(f"Vocab ({len(sorted_vocab)} symbols) written → {VOCAB_PATH}")
 
     dataset_name = out_dir.stem
     print(f"\nFor {dataset_name}, sample count: {len(result)}")
@@ -264,10 +267,14 @@ def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_fine
 
 
 def prepare_and_save_set(inp_dir, out_dir, is_finetune: bool = True, num_workers: int = None):
-    if is_finetune:
-        assert PRETRAINED_VOCAB_PATH.exists(), f"pretrained vocab.txt not found: {PRETRAINED_VOCAB_PATH}"
+    """Prepare a dataset and save it.
+
+    ``is_finetune`` is kept for CLI backward compatibility but no longer
+    affects vocab handling — phonemizer vocab is always freshly generated
+    from the dataset text and written to the canonical VOCAB_PATH.
+    """
     sub_result, durations, vocab_set = prepare_csv_wavs_dir(inp_dir, num_workers=num_workers)
-    save_prepped_dataset(out_dir, sub_result, durations, vocab_set, is_finetune)
+    save_prepped_dataset(out_dir, sub_result, durations, vocab_set)
 
 
 def get_args():
@@ -284,6 +291,13 @@ def get_args():
 
 
 def cli():
+    # Scan and delete any stale vocab.txt files outside the canonical path.
+    try:
+        from scripts.find_stale_vocab import scan_and_clean_stale_vocabs
+        scan_and_clean_stale_vocabs()
+    except ImportError:
+        pass  # scripts/ not on path in all environments — safe to skip
+
     try:
         args = get_args()
         prepare_and_save_set(args.inp_dir, args.out_dir, is_finetune=not args.pretrain, num_workers=args.workers)
