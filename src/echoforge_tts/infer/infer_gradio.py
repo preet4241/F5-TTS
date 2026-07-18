@@ -191,7 +191,7 @@ def load_raon_1b():
       - pip install speechbrain  (for the sbhifigan16k vocoder)
       - pretrained_models/hifigan-16k/ vocoder files (auto-downloaded on first run)
     """
-    from echoforge_tts.infer.utils_infer import expand_model_embeddings
+    from echoforge_tts.infer.utils_infer import expand_text_embedding_layer
     from echoforge_tts.model.utils import get_tokenizer
     from echoforge_tts.config.paths import VOCAB_PATH
 
@@ -210,7 +210,7 @@ def load_raon_1b():
     # Detect and reconcile vocab-size mismatch between the pretrained checkpoint
     # (5,512 English chars) and our tokenizer (variable size).
     _, vocab_size = get_tokenizer(str(VOCAB_PATH), "custom")
-    model = expand_model_embeddings(model, vocab_size)
+    model = expand_text_embedding_layer(model, vocab_size)
 
     return model
 

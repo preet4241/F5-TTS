@@ -1024,6 +1024,15 @@ def prune_checkpoint(checkpoint_path: str, new_checkpoint_path: str, save_ema: b
 
 
 def expand_model_embeddings(ckpt_path, new_ckpt_path, num_new_tokens=42):
+    """
+    NOTE: Operates on **saved checkpoint files** (.pt / .safetensors on disk) —
+    unrelated to infer/utils_infer.py's ``expand_text_embedding_layer`` function
+    (which operates on an in-memory model object after it has been loaded).
+
+    Expand the text-embedding table inside a checkpoint file by appending
+    ``num_new_tokens`` randomly-initialised rows, then write the result to
+    ``new_ckpt_path``.  Called from the Gradio UI via ``vocab_extend()``.
+    """
     seed = 666
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)

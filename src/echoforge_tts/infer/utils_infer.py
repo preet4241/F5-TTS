@@ -135,8 +135,12 @@ class SbHiFiGANVocoder(torch.nn.Module):
 # ── Vocab-size mismatch handler ───────────────────────────────────────────────
 
 
-def expand_model_embeddings(model, new_vocab_size: int, init_std: float = 0.02):
+def expand_text_embedding_layer(model, new_vocab_size: int, init_std: float = 0.02):
     """
+    NOTE: Operates on an **in-memory model object** — unrelated to
+    train/finetune_gradio.py's checkpoint-file-level ``expand_model_embeddings``
+    function (which reads/writes .pt/.safetensors files on disk).
+
     Expand (or contract) the text_embed layer of a CFM-wrapped DiT/UNetT model
     to match new_vocab_size.
 
@@ -156,7 +160,7 @@ def expand_model_embeddings(model, new_vocab_size: int, init_std: float = 0.02):
     old_size = text_embed.weight.shape[0]
 
     if old_size == new_vocab_size:
-        print(f"[expand_model_embeddings] vocab size already matches ({old_size}) — no change")
+        print(f"[expand_text_embedding_layer] vocab size already matches ({old_size}) — no change")
         return model
 
     device    = text_embed.weight.device
@@ -179,7 +183,7 @@ def expand_model_embeddings(model, new_vocab_size: int, init_std: float = 0.02):
 
     direction = "expanded" if new_vocab_size > old_size else "truncated"
     print(
-        f"[expand_model_embeddings] text_embed {direction}: "
+        f"[expand_text_embedding_layer] text_embed {direction}: "
         f"{old_size} → {new_vocab_size} (embed_dim={embed_dim})"
     )
     return model

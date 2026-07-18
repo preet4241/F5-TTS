@@ -189,6 +189,20 @@ class DiT(nn.Module):
         attn_mask_enabled=False,
         long_skip_connection=False,
         checkpoint_activations=False,
+        # ── Architecture extensions (Raon-OpenTTS-1B / forward-compat) ───────
+        norm_type: str = "layernorm",
+        # "layernorm" (default, matches all existing EchoForge / E2TTS configs)
+        # "rmsnorm"   (used by Raon-1B; replaces LayerNorm inside AdaLN blocks
+        #              and ff_norm with RMSNorm, elementwise_affine=False)
+        post_norm: bool = False,
+        # False = pre-norm design (default, F5-TTS / EchoForge / Raon-1B).
+        # True  = post-norm: norm is applied AFTER the residual add in each block.
+        logit_softcapping: float | None = None,
+        # None = disabled (default, zero extra computation on old paths).
+        # float = applies  softcap * tanh(output / softcap)  to final logits,
+        # following the Gemma/Grok convention for gradient-explosion suppression.
+        # Raon-1B config has null here, so this path is inactive in practice but
+        # the parameter must be accepted to avoid TypeError on model construction.
     ):
         super().__init__()
 
@@ -221,16 +235,19 @@ class DiT(nn.Module):
                     pe_attn_head=pe_attn_head,
                     attn_backend=attn_backend,
                     attn_mask_enabled=attn_mask_enabled,
+                    norm_type=norm_type,
+                    post_norm=post_norm,
                 )
                 for _ in range(depth)
             ]
         )
         self.long_skip_connection = nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
 
-        self.norm_out = AdaLayerNorm_Final(dim)  # final modulation
+        self.norm_out = AdaLayerNorm_Final(dim, norm_type=norm_type)  # final modulation
         self.proj_out = nn.Linear(dim, mel_dim)
 
         self.checkpoint_activations = checkpoint_activations
+        self.logit_softcapping = logit_softcapping
 
         self.initialize_weights()
 
@@ -366,5 +383,13 @@ class DiT(nn.Module):
 
         x = self.norm_out(x, t)
         output = self.proj_out(x)
+
+        # logit_softcapping: softcap * tanh(output / softcap)
+        # Activates only when explicitly set (default None → no-op, no extra compute).
+        # Raon-1B config sets this to null, so this branch is inactive for 1B inference;
+        # the parameter must exist to avoid TypeError on model construction.
+        if self.logit_softcapping is not None:
+            softcap = self.logit_softcapping
+            output = softcap * torch.tanh(output / softcap)
 
         return output

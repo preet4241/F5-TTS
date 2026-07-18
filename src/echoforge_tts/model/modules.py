@@ -339,23 +339,37 @@ class ConvNeXtV2Block(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float):
+    def __init__(self, dim: int, eps: float, elementwise_affine: bool = True):
+        """
+        RMS normalization (variance-only, no mean-centering).
+
+        Args:
+            dim: feature dimension.
+            eps: numerical stability term.
+            elementwise_affine: when True (default) a learnable per-channel
+                scale weight is used.  Set False for AdaLN contexts where the
+                affine transform is provided externally by the time-conditioning.
+        """
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
+        self.elementwise_affine = elementwise_affine
+        self.weight = nn.Parameter(torch.ones(dim)) if elementwise_affine else None
         self.native_rms_norm = float(torch.__version__[:3]) >= 2.4
 
     def forward(self, x):
         if self.native_rms_norm:
-            if self.weight.dtype in [torch.float16, torch.bfloat16]:
-                x = x.to(self.weight.dtype)
-            x = F.rms_norm(x, normalized_shape=(x.shape[-1],), weight=self.weight, eps=self.eps)
+            # F.rms_norm accepts weight=None (no-op affine)
+            w = self.weight  # None when elementwise_affine=False
+            if w is not None and w.dtype in [torch.float16, torch.bfloat16]:
+                x = x.to(w.dtype)
+            x = F.rms_norm(x, normalized_shape=(x.shape[-1],), weight=w, eps=self.eps)
         else:
             variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
             x = x * torch.rsqrt(variance + self.eps)
-            if self.weight.dtype in [torch.float16, torch.bfloat16]:
-                x = x.to(self.weight.dtype)
-            x = x * self.weight
+            if self.elementwise_affine:
+                if self.weight.dtype in [torch.float16, torch.bfloat16]:
+                    x = x.to(self.weight.dtype)
+                x = x * self.weight
 
         return x
 
@@ -365,13 +379,25 @@ class RMSNorm(nn.Module):
 
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, norm_type: str = "layernorm"):
+        """
+        Adaptive layer norm with time-step conditioning (shift / scale / gate).
+
+        Args:
+            dim: feature dimension.
+            norm_type: "layernorm" (default, elementwise_affine=False) or
+                       "rmsnorm" (elementwise_affine=False; affine provided by
+                       the time-conditioning shift/scale).
+        """
         super().__init__()
 
         self.silu = nn.SiLU()
         self.linear = nn.Linear(dim, dim * 6)
 
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        if norm_type == "rmsnorm":
+            self.norm = RMSNorm(dim, eps=1e-6, elementwise_affine=False)
+        else:
+            self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
     def forward(self, x, emb=None):
         emb = self.linear(self.silu(emb))
@@ -386,13 +412,23 @@ class AdaLayerNorm(nn.Module):
 
 
 class AdaLayerNorm_Final(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, norm_type: str = "layernorm"):
+        """
+        Final adaptive layer norm (no MLP gating — output projection only).
+
+        Args:
+            dim: feature dimension.
+            norm_type: "layernorm" (default) or "rmsnorm".
+        """
         super().__init__()
 
         self.silu = nn.SiLU()
         self.linear = nn.Linear(dim, dim * 2)
 
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        if norm_type == "rmsnorm":
+            self.norm = RMSNorm(dim, eps=1e-6, elementwise_affine=False)
+        else:
+            self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
     def forward(self, x, emb):
         emb = self.linear(self.silu(emb))
@@ -775,10 +811,14 @@ class DiTBlock(nn.Module):
         pe_attn_head=None,
         attn_backend="torch",  # "torch" or "flash_attn"
         attn_mask_enabled=True,
+        norm_type: str = "layernorm",  # "layernorm" | "rmsnorm"  — propagated from DiT
+        post_norm: bool = False,       # False=pre-norm (default), True=post-norm
     ):
         super().__init__()
 
-        self.attn_norm = AdaLayerNorm(dim)
+        self.post_norm = post_norm
+
+        self.attn_norm = AdaLayerNorm(dim, norm_type=norm_type)
         self.attn = Attention(
             processor=AttnProcessor(
                 pe_attn_head=pe_attn_head,
@@ -792,22 +832,37 @@ class DiTBlock(nn.Module):
             qk_norm=qk_norm,
         )
 
-        self.ff_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        if norm_type == "rmsnorm":
+            self.ff_norm = RMSNorm(dim, eps=1e-6, elementwise_affine=False)
+        else:
+            self.ff_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.ff = FeedForward(dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh")
 
     def forward(self, x, t, mask=None, rope=None):  # x: noised input, t: time embedding
-        # pre-norm & modulation for attention input
+        # Compute time-conditioned modulation params and the pre-normed input.
+        # attn_norm always normalises x first, then applies shift/scale — the
+        # returned `norm` is the normed+modulated tensor ready for attention.
         norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
 
-        # attention
-        attn_output = self.attn(x=norm, mask=mask, rope=rope)
+        if not self.post_norm:
+            # ── Pre-norm path (default — F5-TTS, EchoForge_v1_Base, Raon-1B) ────
+            attn_output = self.attn(x=norm, mask=mask, rope=rope)
+            x = x + gate_msa.unsqueeze(1) * attn_output
 
-        # process attention output for input x
-        x = x + gate_msa.unsqueeze(1) * attn_output
+            norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            ff_output = self.ff(norm)
+            x = x + gate_mlp.unsqueeze(1) * ff_output
+        else:
+            # ── Post-norm path ────────────────────────────────────────────────────
+            # Attention on the pre-normed input (as above), then norm applied AFTER
+            # the residual add — consistent with classical post-norm transformer design
+            # adapted to the AdaLN time-conditioning scheme.
+            attn_output = self.attn(x=norm, mask=mask, rope=rope)
+            x = self.attn_norm.norm(x + gate_msa.unsqueeze(1) * attn_output)
 
-        norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        ff_output = self.ff(norm)
-        x = x + gate_mlp.unsqueeze(1) * ff_output
+            ff_input = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            ff_output = self.ff(ff_input)
+            x = self.ff_norm(x + gate_mlp.unsqueeze(1) * ff_output)
 
         return x
 
