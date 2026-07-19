@@ -34,7 +34,7 @@ from echoforge_tts.infer.utils_infer import (
 
 parser = argparse.ArgumentParser(
     prog="python3 infer-cli.py",
-    description="Commandline interface for E2/F5 TTS with Advanced Batch Processing.",
+    description="Commandline interface for EchoForge (Raon-OpenTTS-1B) TTS with Advanced Batch Processing.",
     epilog="Specify options above to override one or more settings from config.",
 )
 parser.add_argument(
@@ -52,7 +52,7 @@ parser.add_argument(
     "-m",
     "--model",
     type=str,
-    help="The model name: EchoForge_v1_Base | EchoForge_Base | E2TTS_Base | etc.",
+    help="The model name: RaonOpenTTS_1B",
 )
 parser.add_argument(
     "-mc",
@@ -131,8 +131,8 @@ parser.add_argument(
 parser.add_argument(
     "--vocoder_name",
     type=str,
-    choices=["vocos", "bigvgan"],
-    help=f"Used vocoder name: vocos | bigvgan, default {mel_spec_type}",
+    choices=["vocos", "bigvgan", "sbhifigan16k"],
+    help="Used vocoder name: vocos | bigvgan | sbhifigan16k, default sbhifigan16k",
 )
 parser.add_argument(
     "--target_rms",
@@ -184,7 +184,7 @@ config = tomli.load(open(args.config, "rb"))
 
 # command-line interface parameters
 
-model = args.model or config.get("model", "EchoForge_v1_Base")
+model = args.model or config.get("model", "RaonOpenTTS_1B")
 ckpt_file = args.ckpt_file or config.get("ckpt_file", "")
 vocab_file = args.vocab_file or config.get("vocab_file", "")
 
@@ -212,7 +212,7 @@ if save_chunk and use_legacy_text:
 remove_silence = args.remove_silence or config.get("remove_silence", False)
 load_vocoder_from_local = args.load_vocoder_from_local or config.get("load_vocoder_from_local", False)
 
-vocoder_name = args.vocoder_name or config.get("vocoder_name", mel_spec_type)
+vocoder_name = args.vocoder_name or config.get("vocoder_name", "sbhifigan16k")
 target_rms = args.target_rms or config.get("target_rms", target_rms)
 cross_fade_duration = args.cross_fade_duration or config.get("cross_fade_duration", cross_fade_duration)
 nfe_step = args.nfe_step or config.get("nfe_step", nfe_step)
@@ -257,6 +257,8 @@ if vocoder_name == "vocos":
     vocoder_local_path = "../checkpoints/vocos-mel-24khz"
 elif vocoder_name == "bigvgan":
     vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
+elif vocoder_name == "sbhifigan16k":
+    vocoder_local_path = "../checkpoints/hifigan-16k"
 
 vocoder = load_vocoder(
     vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path, device=device
@@ -271,24 +273,13 @@ model_cfg = OmegaConf.load(
 model_cls = get_class(f"echoforge_tts.model.{model_cfg.model.backbone}")
 model_arc = model_cfg.model.arch
 
-repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
+repo_name, ckpt_step, ckpt_type = "KRAFTON/Raon-OpenTTS-1B", 520000, "pt"
 
-if model != "EchoForge_Base":
-    assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
-
-# override for previous models
-if model == "EchoForge_Base":
-    if vocoder_name == "vocos":
-        ckpt_step = 1200000
-    elif vocoder_name == "bigvgan":
-        model = "EchoForge_Base_bigvgan"
-        ckpt_type = "pt"
-elif model == "E2TTS_Base":
-    repo_name = "E2-TTS"
-    ckpt_step = 1200000
+assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
 
 if not ckpt_file:
-    ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}"))
+    # Single canonical checkpoint source — update this one line to point to a new repo.
+    ckpt_file = str(cached_path(f"hf://{repo_name}/model_{ckpt_step}.{ckpt_type}"))
 elif ckpt_file.startswith("hf://"):
     ckpt_file = str(cached_path(ckpt_file))
 
