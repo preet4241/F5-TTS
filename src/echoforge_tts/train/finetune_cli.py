@@ -5,7 +5,7 @@ from importlib.resources import files
 
 from cached_path import cached_path
 
-from echoforge_tts.model import CFM, DiT, Trainer, UNetT
+from echoforge_tts.model import CFM, DiT, Trainer
 from echoforge_tts.model.dataset import load_dataset
 from echoforge_tts.model.utils import get_tokenizer
 
@@ -26,8 +26,8 @@ def parse_args():
     parser.add_argument(
         "--exp_name",
         type=str,
-        default="EchoForge_v1_Base",
-        choices=["EchoForge_v1_Base", "EchoForge_Base", "E2TTS_Base"],
+        default="RaonOpenTTS_1B",
+        choices=["RaonOpenTTS_1B"],
         help="Experiment name",
     )
     parser.add_argument("--dataset_name", type=str, default="Emilia_ZH_EN", help="Name of the dataset to use")
@@ -85,56 +85,29 @@ def main():
 
     # Model parameters based on experiment name
 
-    if args.exp_name == "EchoForge_v1_Base":
+    if args.exp_name == "RaonOpenTTS_1B":
         wandb_resume_id = None
         model_cls = DiT
         model_cfg = dict(
-            dim=1024,
-            depth=22,
-            heads=16,
-            ff_mult=2,
-            text_dim=512,
-            conv_layers=4,
-        )
-        if args.finetune:
-            if args.pretrain is None:
-                ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
-            else:
-                ckpt_path = args.pretrain
-
-    elif args.exp_name == "EchoForge_Base":
-        wandb_resume_id = None
-        model_cls = DiT
-        model_cfg = dict(
-            dim=1024,
-            depth=22,
-            heads=16,
-            ff_mult=2,
-            text_dim=512,
-            text_mask_padding=False,
-            conv_layers=4,
-            pe_attn_head=1,
-        )
-        if args.finetune:
-            if args.pretrain is None:
-                ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
-            else:
-                ckpt_path = args.pretrain
-
-    elif args.exp_name == "E2TTS_Base":
-        wandb_resume_id = None
-        model_cls = UNetT
-        model_cfg = dict(
-            dim=1024,
-            depth=24,
-            heads=16,
+            dim=1408,
+            depth=28,
+            heads=24,
             ff_mult=4,
-            text_mask_padding=False,
-            pe_attn_head=1,
+            text_dim=512,
+            text_mask_padding=True,
+            qk_norm=None,
+            conv_layers=4,
+            pe_attn_head=None,
+            attn_mask_enabled=False,
+            checkpoint_activations=False,
+            norm_type="rmsnorm",
+            post_norm=False,
+            logit_softcapping=None,
         )
         if args.finetune:
             if args.pretrain is None:
-                ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+                # Single canonical checkpoint source — update this one line to point to a new repo.
+                ckpt_path = str(cached_path("hf://KRAFTON/Raon-OpenTTS-1B/model_520000.pt"))
             else:
                 ckpt_path = args.pretrain
 

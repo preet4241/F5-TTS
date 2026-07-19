@@ -219,12 +219,13 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--model",
-        default="EchoForge_v1_Base",
-        help="The model name, e.g. EchoForge_v1_Base",
+        default="RaonOpenTTS_1B",
+        help="The model name, e.g. RaonOpenTTS_1B",
     )
     parser.add_argument(
         "--ckpt_file",
-        default=str(hf_hub_download(repo_id="SWivid/F5-TTS", filename="F5TTS_v1_Base/model_1250000.safetensors")),
+        # Single canonical checkpoint source — update this one line to point to a new repo.
+        default=str(hf_hub_download(repo_id="KRAFTON/Raon-OpenTTS-1B", filename="model_520000.pt")),
         help="Path to the model checkpoint file",
     )
     parser.add_argument(

@@ -135,7 +135,7 @@ def load_settings(project_name):
 
     # Default settings
     default_settings = {
-        "exp_name": "EchoForge_v1_Base",
+        "exp_name": "RaonOpenTTS_1B",
         "learning_rate": 1e-5,
         "batch_size_per_gpu": 3200,
         "batch_size_type": "frame",
@@ -1115,12 +1115,9 @@ def vocab_extend(project_name, symbols, model_type):
     with open(VOCAB_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(vocab))
 
-    if model_type == "EchoForge_v1_Base":
-        ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
-    elif model_type == "EchoForge_Base":
-        ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
-    elif model_type == "E2TTS_Base":
-        ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+    if model_type == "RaonOpenTTS_1B":
+        # Single canonical checkpoint source — update this one line to point to a new repo.
+        ckpt_path = str(cached_path("hf://KRAFTON/Raon-OpenTTS-1B/model_520000.pt"))
 
     vocab_size_new = len(miss_symbols)
 
@@ -1519,7 +1516,7 @@ Using the extended model, you can finetune to a new language that is missing sym
 ```""")
 
             exp_name_extend = gr.Radio(
-                label="Model", choices=["EchoForge_v1_Base", "EchoForge_Base", "E2TTS_Base"], value="EchoForge_v1_Base"
+                label="Model", choices=["RaonOpenTTS_1B"], value="RaonOpenTTS_1B"
             )
 
             with gr.Row():
@@ -1597,7 +1594,7 @@ The auto-setting is still experimental. Set a large value of epoch if not sure; 
 If you encounter a memory error, try reducing the batch size per GPU to a smaller number.
 ```""")
             with gr.Row():
-                exp_name = gr.Radio(label="Model", choices=["EchoForge_v1_Base", "EchoForge_Base", "E2TTS_Base"])
+                exp_name = gr.Radio(label="Model", choices=["RaonOpenTTS_1B"], value="RaonOpenTTS_1B")
                 tokenizer_file = gr.Textbox(label="Tokenizer File")
                 file_checkpoint_train = gr.Textbox(label="Path to the Pretrained Checkpoint")
 
@@ -1829,7 +1826,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
 Check the use_ema setting (True or False) for your model to see what works best for you. Set seed to -1 for random.
 ```""")
             exp_name = gr.Radio(
-                label="Model", choices=["EchoForge_v1_Base", "EchoForge_Base", "E2TTS_Base"], value="EchoForge_v1_Base"
+                label="Model", choices=["RaonOpenTTS_1B"], value="RaonOpenTTS_1B"
             )
             list_checkpoints, checkpoint_select = get_checkpoints_project(projects_selelect, False)
 

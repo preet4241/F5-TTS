@@ -20,10 +20,10 @@ from echoforge_tts.infer.utils_infer import (
 from echoforge_tts.model.utils import seed_everything
 
 
-class F5TTS:
+class EchoForge:
     def __init__(
         self,
-        model="EchoForge_v1_Base",
+        model="RaonOpenTTS_1B",
         ckpt_file="",
         vocab_file="",
         ode_method="euler",
@@ -62,22 +62,11 @@ class F5TTS:
             self.mel_spec_type, vocoder_local_path is not None, vocoder_local_path, self.device, hf_cache_dir
         )
 
-        repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
-
-        # override for previous models
-        if model == "EchoForge_Base":
-            if self.mel_spec_type == "vocos":
-                ckpt_step = 1200000
-            elif self.mel_spec_type == "bigvgan":
-                model = "EchoForge_Base_bigvgan"
-                ckpt_type = "pt"
-        elif model == "E2TTS_Base":
-            repo_name = "E2-TTS"
-            ckpt_step = 1200000
-
         if not ckpt_file:
+            # Single canonical checkpoint source.
+            # To switch to a re-uploaded repo, change only this one line.
             ckpt_file = str(
-                cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}", cache_dir=hf_cache_dir)
+                cached_path("hf://KRAFTON/Raon-OpenTTS-1B/model_520000.pt", cache_dir=hf_cache_dir)
             )
         self.ema_model = load_model(
             model_cls, model_arc, ckpt_file, self.mel_spec_type, vocab_file, self.ode_method, self.use_ema, self.device
@@ -150,7 +139,7 @@ class F5TTS:
 
 
 if __name__ == "__main__":
-    f5tts = F5TTS()
+    f5tts = EchoForge()
 
     wav, sr, spec = f5tts.infer(
         ref_file=str(files("echoforge_tts").joinpath("infer/examples/basic/basic_ref_en.wav")),
@@ -162,3 +151,7 @@ if __name__ == "__main__":
     )
 
     print("seed :", f5tts.seed)
+
+
+# Backward-compatibility alias — deprecated, use EchoForge directly.
+F5TTS = EchoForge

@@ -44,7 +44,7 @@ from echoforge_tts.infer.utils_infer import (
     save_spectrogram,
     tempfile_kwargs,
 )
-from echoforge_tts.model import DiT, UNetT
+from echoforge_tts.model import DiT
 
 
 # ── EchoForge AI custom theme ──────────────────────────────────────────────
@@ -129,14 +129,8 @@ h1, h2, h3, .echoforge-header {
 # ── end theme / css ────────────────────────────────────────────────────────
 
 
-DEFAULT_TTS_MODEL = "EchoForge_v1"
+DEFAULT_TTS_MODEL = "RaonOpenTTS_1B"
 tts_model_choice = DEFAULT_TTS_MODEL
-
-DEFAULT_TTS_MODEL_CFG = [
-    "hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors",
-    "hf://SWivid/F5-TTS/F5TTS_v1_Base/vocab.txt",
-    json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
-]
 
 # ── Raon-OpenTTS-1B config ─────────────────────────────────────────────────
 # Checkpoint: model_last.pt confirmed from Raon README.
@@ -170,13 +164,7 @@ RAON_1B_MODEL_CFG = [
 vocoder = load_vocoder()
 
 
-def load_echoforge():
-    ckpt_path = str(cached_path(DEFAULT_TTS_MODEL_CFG[0]))
-    echoforge_model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
-    return load_model(DiT, echoforge_model_cfg, ckpt_path)
-
-
-def load_raon_1b():
+def load_echoforge_model():
     """
     Load Raon-OpenTTS-1B (1.05B DiT) for inference.
 
@@ -215,15 +203,6 @@ def load_raon_1b():
     return model
 
 
-raon_1b_ema_model = None  # lazy-loaded on first use via load_raon_1b()
-
-
-def load_e2tts():
-    ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.safetensors"))
-    E2TTS_model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4, text_mask_padding=False, pe_attn_head=1)
-    return load_model(UNetT, E2TTS_model_cfg, ckpt_path)
-
-
 def load_custom(ckpt_path: str, vocab_path="", model_cfg=None):
     ckpt_path, vocab_path = ckpt_path.strip(), vocab_path.strip()
     if ckpt_path.startswith("hf://"):
@@ -231,14 +210,13 @@ def load_custom(ckpt_path: str, vocab_path="", model_cfg=None):
     if vocab_path.startswith("hf://"):
         vocab_path = str(cached_path(vocab_path))
     if model_cfg is None:
-        model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
+        model_cfg = json.loads(RAON_1B_MODEL_CFG[1])
     elif isinstance(model_cfg, str):
         model_cfg = json.loads(model_cfg)
     return load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
 
 
-echoforge_ema_model = load_echoforge()
-E2TTS_ema_model = load_e2tts() if USING_SPACES else None
+echoforge_ema_model = load_echoforge_model()
 custom_ema_model, pre_custom_path = None, ""
 
 chat_model_state = None
@@ -311,12 +289,6 @@ def infer(
 
     if model == DEFAULT_TTS_MODEL:
         ema_model = echoforge_ema_model
-    elif model == "E2-TTS":
-        global E2TTS_ema_model
-        if E2TTS_ema_model is None:
-            show_info("Loading E2-TTS model...")
-            E2TTS_ema_model = load_e2tts()
-        ema_model = E2TTS_ema_model
     elif isinstance(model, tuple) and model[0] == "Custom":
         assert not USING_SPACES, "Only official checkpoints allowed in Spaces."
         global custom_ema_model, pre_custom_path
@@ -422,8 +394,7 @@ with gr.Blocks() as app_tts:
     def collapse_accordion():
         return gr.Accordion(open=False)
 
-    # Workaround for https://github.com/SWivid/F5-TTS/issues/1239#issuecomment-3677987413
-    # i.e. to set gr.Accordion(open=True) by default, then collapse manually Blocks loaded
+    # Workaround: set gr.Accordion(open=True) by default, then collapse it once Blocks loaded.
     app_tts.load(
         fn=collapse_accordion,
         inputs=None,
@@ -1169,54 +1140,28 @@ If you're having issues, try converting your reference audio to WAV or MP3, clip
     with gr.Row():
         if not USING_SPACES:
             choose_tts_model = gr.Radio(
-                choices=[DEFAULT_TTS_MODEL, "E2-TTS", "Custom"], label="Choose TTS Model", value=DEFAULT_TTS_MODEL
+                choices=[DEFAULT_TTS_MODEL, "Custom"], label="Choose TTS Model", value=DEFAULT_TTS_MODEL
             )
         else:
             choose_tts_model = gr.Radio(
-                choices=[DEFAULT_TTS_MODEL, "E2-TTS"], label="Choose TTS Model", value=DEFAULT_TTS_MODEL
+                choices=[DEFAULT_TTS_MODEL], label="Choose TTS Model", value=DEFAULT_TTS_MODEL
             )
         custom_ckpt_path = gr.Dropdown(
-            choices=[DEFAULT_TTS_MODEL_CFG[0]],
+            choices=[RAON_1B_MODEL_CFG[0]],
             value=load_last_used_custom()[0],
             allow_custom_value=True,
             label="Model: local_path | hf://user_id/repo_id/model_ckpt",
             visible=False,
         )
         custom_vocab_path = gr.Dropdown(
-            choices=[DEFAULT_TTS_MODEL_CFG[1]],
+            choices=[],
             value=load_last_used_custom()[1],
             allow_custom_value=True,
             label="Vocab: local_path | hf://user_id/repo_id/vocab_file",
             visible=False,
         )
         custom_model_cfg = gr.Dropdown(
-            choices=[
-                DEFAULT_TTS_MODEL_CFG[2],
-                json.dumps(
-                    dict(
-                        dim=1024,
-                        depth=22,
-                        heads=16,
-                        ff_mult=2,
-                        text_dim=512,
-                        text_mask_padding=False,
-                        conv_layers=4,
-                        pe_attn_head=1,
-                    )
-                ),
-                json.dumps(
-                    dict(
-                        dim=768,
-                        depth=18,
-                        heads=12,
-                        ff_mult=2,
-                        text_dim=512,
-                        text_mask_padding=False,
-                        conv_layers=4,
-                        pe_attn_head=1,
-                    )
-                ),
-            ],
+            choices=[RAON_1B_MODEL_CFG[1]],
             value=load_last_used_custom()[2],
             allow_custom_value=True,
             label="Config: in a dictionary form",

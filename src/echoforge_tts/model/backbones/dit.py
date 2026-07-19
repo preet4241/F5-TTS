@@ -191,7 +191,7 @@ class DiT(nn.Module):
         checkpoint_activations=False,
         # ── Architecture extensions (Raon-OpenTTS-1B / forward-compat) ───────
         norm_type: str = "layernorm",
-        # "layernorm" (default, matches all existing EchoForge / E2TTS configs)
+        # "layernorm" (default)
         # "rmsnorm"   (used by Raon-1B; replaces LayerNorm inside AdaLN blocks
         #              and ff_norm with RMSNorm, elementwise_affine=False)
         post_norm: bool = False,

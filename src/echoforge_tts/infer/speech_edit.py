@@ -32,8 +32,8 @@ device = (
 
 seed = None  # int | None
 
-exp_name = "EchoForge_v1_Base"  # EchoForge_v1_Base | E2TTS_Base
-ckpt_step = 1250000
+exp_name = "RaonOpenTTS_1B"
+ckpt_step = 520000
 
 nfe_step = 32  # 16, 32
 cfg_strength = 2.0
@@ -59,7 +59,8 @@ n_fft = model_cfg.model.mel_spec.n_fft
 
 
 # ckpt_path = str(files("echoforge_tts").joinpath("../../")) + f"/ckpts/{exp_name}/model_{ckpt_step}.safetensors"
-ckpt_path = str(cached_path(f"hf://SWivid/F5-TTS/{exp_name}/model_{ckpt_step}.safetensors"))
+# Single canonical checkpoint source — update this one line to point to a new repo.
+ckpt_path = str(cached_path("hf://KRAFTON/Raon-OpenTTS-1B/model_520000.pt"))
 output_dir = "tests"
 
 
